@@ -1,11 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Sign in · Competition System{% endblock %}
+{% block title %}Sign in · UBNETDEF{% endblock %}
 {% block content %}
 <section class="auth-layout">
   <div class="auth-aside">
-    <p class="eyebrow">ONE ACCOUNT · ALL SITES</p>
-    <h1>Welcome back.</h1>
-    <p>Sign in with the account created for you by your competition administrator or organizer.</p>
+    <p class="eyebrow">YOUR TEAM WORKSPACE</p>
+    <h1>One login. Your whole competition.</h1>
+    <p>Team accounts give you quick access to the tools you need during the event:</p>
+    <ul class="auth-benefits">
+      <li><strong>Live scoreboard</strong><span>Watch each team's service-check status and results.</span></li>
+      <li><strong>Team bank</strong><span>Check your simulated credits and transaction history.</span></li>
+      <li><strong>Competition store</strong><span>Browse items and place orders with your team credits.</span></li>
+      <li><strong>Team settings</strong><span>Update unlocked check credentials and permitted device addresses.</span></li>
+    </ul>
+    <p class="auth-aside-note">Your organizer controls which team settings are available.</p>
   </div>
   <form class="panel auth-panel" method="post" action="{{ url_for('auth.login') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

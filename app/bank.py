@@ -28,7 +28,7 @@ def home():
         return team_account()
     if current_user.role not in {"admin", "organizer", "banker"}:
         abort(403)
-    teams = Team.query.order_by(Team.name).all()
+    teams = Team.query.filter(Team.user.has()).order_by(Team.name).all()
     balances = {team.id: balance_for(team.id) for team in teams}
     transactions = BankTransaction.query.order_by(BankTransaction.created_at.desc()).limit(100).all()
     return render_template("bank_admin.html", teams=teams, balances=balances, transactions=transactions)
@@ -75,7 +75,12 @@ def adjust():
         flash("Enter a description between 1 and 255 characters.", "error")
         return redirect(url_for("bank.home"))
 
-    team = Team.query.filter_by(id=team_id).with_for_update().first()
+    team = (
+        Team.query.filter_by(id=team_id)
+        .filter(Team.user.has())
+        .with_for_update()
+        .first()
+    )
     if team is None:
         flash("That team account no longer exists.", "error")
         return redirect(url_for("bank.home"))

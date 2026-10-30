@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ competition.name }} · Competition System{% endblock %}
+{% block title %}{{ competition.name }} · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
   <div><p class="eyebrow">COMPETITION CONFIGURATION</p><h1>{{ competition.name }}</h1><p>{{ competition.description or "Set up teams and service checks before activating scoring." }}</p></div>
@@ -196,9 +196,9 @@
   {% endif %}
 </section>
 <section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">COMPETITION TEAMS</p><h2>{{ competition.teams|length }} enrolled</h2></div></div>
+  <div class="section-heading"><div><p class="eyebrow">COMPETITION TEAMS</p><h2>{{ teams|length }} enrolled</h2></div></div>
   <div class="table-wrap"><table><thead><tr><th>Team</th><th>Scoring host</th><th>Update host</th></tr></thead><tbody>
-    {% for team in competition.teams %}
+    {% for team in teams %}
       {% set host = team_hosts.get(team.id) %}
       <tr><td>{{ team.name }}</td><td>{{ host.address if host else "Not configured" }}</td>
         <td><form class="inline-form" method="post" action="{{ url_for('admin.set_host', competition_id=competition.id, team_id=team.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="address" placeholder="hostname or IP" value="{{ host.address if host else '' }}" required><button class="button button-secondary button-small">Save</button></form></td></tr>

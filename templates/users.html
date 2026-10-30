@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Accounts · Competition System{% endblock %}
+{% block title %}Accounts · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
-  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Accounts and teams</h1><p>Create accounts for teams and staff. Users do not self-register.</p></div>
+  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Accounts and teams</h1><p>Create accounts for teams and staff. Removing a team account permanently removes its linked team, scoring, banking, store, host, and check data.</p></div>
   <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a>
 </section>
 <section class="split-layout">
@@ -33,13 +33,13 @@
 <section class="section-block">
   <div class="section-heading"><div><p class="eyebrow">ACCOUNT DIRECTORY</p><h2>{{ users|length }} accounts</h2></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Username</th><th>Role</th><th>Team</th><th>Status</th><th>Reset password</th><th></th></tr></thead>
+    <thead><tr><th>Username</th><th>Role</th><th>Team</th><th>Status</th><th>Reset password</th><th>Account actions</th></tr></thead>
     <tbody>{% for user in users %}
       <tr>
-        <td><strong>{{ user.username }}</strong></td><td>{{ user.role|title }}</td><td>{{ user.team.name if user.team else "—" }}</td>
+        <td><form class="inline-form username-edit-form" method="post" action="{{ url_for('admin.update_username', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="username" value="{{ user.username }}" maxlength="80" aria-label="Username for {{ user.username }}" required><button class="button button-secondary button-small" type="submit">Save</button></form></td><td>{{ user.role|title }}</td><td>{{ user.team.name if user.team else "—" }}</td>
         <td><span class="pill pill-{{ 'active' if user.is_active else 'paused' }}">{{ "Active" if user.is_active else "Disabled" }}</span></td>
         <td><form class="inline-form" method="post" action="{{ url_for('admin.reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="password" type="password" minlength="12" placeholder="New password" required><button class="button button-secondary button-small">Reset</button></form></td>
-        <td><form method="post" action="{{ url_for('admin.toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small" {% if user.id == current_user.id %}disabled{% endif %}>{{ "Disable" if user.is_active else "Enable" }}</button></form></td>
+        <td><div class="account-actions"><form method="post" action="{{ url_for('admin.toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small" {% if user.id == current_user.id %}disabled{% endif %}>{{ "Disable" if user.is_active else "Enable" }}</button></form><form method="post" action="{{ url_for('admin.delete_user', user_id=user.id) }}" data-confirm="Permanently remove account {{ user.username }}{% if user.team %} and team {{ user.team.name }}{% endif %}, including any linked scoring, banking, store, host, and check data? This cannot be undone." onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-danger button-small" type="submit" {% if user.id == current_user.id or (user.role == 'admin' and admin_count == 1) %}disabled{% endif %}>Remove</button></form></div></td>
       </tr>
     {% else %}<tr><td colspan="6" class="table-empty">No accounts have been created.</td></tr>{% endfor %}</tbody>
   </table></div>

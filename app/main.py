@@ -57,7 +57,10 @@ def home():
             return redirect_to_site("store", "store.catalog")
         return redirect(url_for("main.dashboard"))
 
-    competitions = Competition.query.filter_by(status="active").order_by(Competition.name).all()
+    competitions = Competition.query.filter_by(
+        status="active",
+        is_archived=False,
+    ).order_by(Competition.name).all()
     products = Product.query.filter_by(published=True).order_by(Product.name).limit(4).all()
     return render_template("landing.html", competitions=competitions, products=products)
 
@@ -77,7 +80,7 @@ def dashboard():
 
 @main_bp.route("/scoreboard")
 def scoreboard():
-    query = Competition.query.filter_by(status="active")
+    query = Competition.query.filter_by(status="active", is_archived=False)
     competitions = query.order_by(Competition.name).all()
     settings = db.session.get(PlatformSetting, 1)
     show_competition_selector = bool(
@@ -109,7 +112,10 @@ def scoreboard():
 
 
 def _scoreboard_snapshot(competition):
-    teams = sorted(competition.teams, key=lambda team: team.name.casefold())
+    teams = sorted(
+        competition.teams_with_accounts,
+        key=lambda team: team.name.casefold(),
+    )
     point_totals = (
         db.session.query(
             Team.id,
@@ -125,13 +131,10 @@ def _scoreboard_snapshot(competition):
         .all()
     )
     score_by_team = {team_id: score for team_id, score in point_totals}
-    rows = sorted(
-        (
-            {"team": team, "score": score_by_team.get(team.id, 0)}
-            for team in teams
-        ),
-        key=lambda row: (-row["score"], row["team"].name.casefold()),
-    )
+    rows = [
+        {"team": team, "score": score_by_team.get(team.id, 0)}
+        for team in teams
+    ]
     services = (
         Service.query.outerjoin(HostGroup, Service.host_group_id == HostGroup.id)
         .filter(
@@ -175,7 +178,11 @@ def _scoreboard_snapshot(competition):
 @main_bp.get("/scoreboard/live/<int:competition_id>")
 def scoreboard_live(competition_id):
     competition = db.session.get(Competition, competition_id)
-    if competition is None or competition.status != "active":
+    if (
+        competition is None
+        or competition.status != "active"
+        or competition.is_archived
+    ):
         return jsonify(error="Competition not found or not active."), 404
 
     latest_round = (
@@ -196,7 +203,13 @@ def scoreboard_live(competition_id):
         f"{latest_round.id}:{latest_round.status}" if latest_round else "no-rounds",
         *(f"{service.id}:{int(service.enabled)}:{int(service.paused)}:{int(service.hidden_from_scoreboard)}"
           for service in service_versions),
-        *(f"{team.id}:{team.name}" for team in sorted(competition.teams, key=lambda item: item.id)),
+        *(
+            f"{team.id}:{team.name}"
+            for team in sorted(
+                competition.teams_with_accounts,
+                key=lambda item: item.id,
+            )
+        ),
     ]
     etag = hashlib.sha256("|".join(version_parts).encode("utf-8")).hexdigest()
     if request.if_none_match.contains(etag):
@@ -252,9 +265,10 @@ def team_checks():
     if current_user.role == "team" and current_user.team_id is None:
         abort(403)
 
-    active_competitions = Competition.query.filter_by(status="active").order_by(
-        Competition.name
-    ).all()
+    active_competitions = Competition.query.filter_by(
+        status="active",
+        is_archived=False,
+    ).order_by(Competition.name).all()
     if current_user.role == "team":
         competitions = [
             competition
@@ -278,7 +292,10 @@ def team_checks():
     services = []
     hosts = []
     if selected_competition is not None:
-        teams = sorted(selected_competition.teams, key=lambda team: team.name.casefold())
+        teams = sorted(
+            selected_competition.teams_with_accounts,
+            key=lambda team: team.name.casefold(),
+        )
         if current_user.role == "team":
             selected_team = next(
                 (team for team in teams if team.id == current_user.team_id), None

@@ -21,6 +21,7 @@ from app.models import (
     IPTemplate,
     PlatformSetting,
     Order,
+    OrderAnswer,
     Product,
     ProductQuestion,
     ScoreRound,
@@ -89,6 +90,157 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"Password Hash", response.data)
         self.assertNotIn(self.admin.password_hash.encode(), response.data)
+
+    def test_admin_can_rename_accounts_and_reject_duplicate_usernames(self):
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.post(
+            f"/admin/users/{self.team_user.id}/username",
+            data={"username": "blue-renamed"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            db.session.get(User, self.team_user.id).username,
+            "blue-renamed",
+        )
+
+        response = self.client.post(
+            f"/admin/users/{self.team_user.id}/username",
+            data={"username": "ADMIN"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            db.session.get(User, self.team_user.id).username,
+            "blue-renamed",
+        )
+
+    def test_removing_team_account_deletes_linked_team_records(self):
+        competition = Competition(name="Team removal board", status="active")
+        group = HostGroup(competition=competition, name="Linux")
+        service = Service(
+            competition=competition,
+            host_group=group,
+            name="Linux PING",
+            check_type="ping",
+            protocol="ping",
+            port=0,
+        )
+        competition.teams.append(self.team)
+        host = Host(
+            competition=competition,
+            team=self.team,
+            host_group=group,
+            address="192.0.2.10",
+        )
+        score_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="completed",
+        )
+        product = Product(
+            name="Team removal item",
+            price=Decimal("5.00"),
+            published=True,
+        )
+        question = ProductQuestion(product=product, text="Size")
+        order = Order(
+            team=self.team,
+            product=product,
+            quantity=1,
+            unit_price=Decimal("5.00"),
+            status="pending",
+        )
+        order.answers.append(OrderAnswer(question=question, answer="M"))
+        other_team = Team(name="Preserved team")
+        db.session.add_all(
+            [competition, group, service, host, score_round, product, other_team]
+        )
+        db.session.flush()
+        result = ScoreResult(
+            score_round=score_round,
+            team=self.team,
+            service=service,
+            passed=True,
+            points=1,
+        )
+        db.session.add_all(
+            [
+                result,
+                order,
+                TeamServiceConfig(
+                    team=self.team,
+                    service=service,
+                    credentials_override="encrypted-test-value",
+                ),
+            ]
+        )
+        db.session.flush()
+        db.session.add_all(
+            [
+                BankTransaction(
+                    team=self.team,
+                    kind="credit",
+                    amount=Decimal("1.00"),
+                    description="Score payout",
+                    score_result_id=result.id,
+                ),
+                BankTransaction(
+                    team=self.team,
+                    kind="debit",
+                    amount=Decimal("5.00"),
+                    description="Store order",
+                    order_id=order.id,
+                ),
+                BankTransaction(
+                    team=other_team,
+                    created_by=self.team_user,
+                    kind="credit",
+                    amount=Decimal("2.00"),
+                    description="Unrelated transaction",
+                ),
+            ]
+        )
+        db.session.commit()
+        team_id = self.team.id
+        user_id = self.team_user.id
+        other_team_id = other_team.id
+
+        self.login("admin", "another-long-test-password")
+        response = self.client.post(f"/admin/users/{user_id}/delete")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(User, user_id))
+        self.assertIsNone(db.session.get(Team, team_id))
+        self.assertEqual(Host.query.filter_by(team_id=team_id).count(), 0)
+        self.assertEqual(TeamServiceConfig.query.filter_by(team_id=team_id).count(), 0)
+        self.assertEqual(ScoreResult.query.filter_by(team_id=team_id).count(), 0)
+        self.assertEqual(BankTransaction.query.filter_by(team_id=team_id).count(), 0)
+        self.assertEqual(Order.query.filter_by(team_id=team_id).count(), 0)
+        self.assertEqual(OrderAnswer.query.count(), 0)
+        remaining_transaction = BankTransaction.query.filter_by(
+            team_id=other_team_id
+        ).one()
+        self.assertIsNone(remaining_transaction.created_by_id)
+
+    def test_account_removal_cannot_remove_the_signed_in_admin(self):
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.post(f"/admin/users/{self.admin.id}/delete")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNotNone(db.session.get(User, self.admin.id))
+        self.assertEqual(User.query.filter_by(role="admin").count(), 1)
+
+    def test_login_explains_team_access_and_uses_ubnetdef_brand(self):
+        response = self.client.get("/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"static/ubnetdef-logo.svg", response.data)
+        self.assertIn(b"Live scoreboard", response.data)
+        self.assertIn(b"Team bank", response.data)
+        self.assertIn(b"Competition store", response.data)
+        self.assertIn(b"Team settings", response.data)
+        self.assertNotIn(b"Competition System", response.data)
 
     def test_admin_can_assign_login_to_existing_unclaimed_team(self):
         team = Team(name="Existing scoreboard team")
@@ -352,7 +504,13 @@ class PlatformTests(unittest.TestCase):
     def test_scoreboard_builder_generates_device_hosts_from_ip_template(self):
         competition = Competition(name="Guided Scoreboard")
         additional_team = Team(name="Red Team")
-        db.session.add_all([competition, additional_team])
+        additional_team_user = User(
+            username="red-team",
+            role="team",
+            team=additional_team,
+        )
+        additional_team_user.set_password("red-team-test-password")
+        db.session.add_all([competition, additional_team, additional_team_user])
         db.session.commit()
         self.login("admin", "another-long-test-password")
 
@@ -386,14 +544,14 @@ class PlatformTests(unittest.TestCase):
                 "action": "save-group-template",
                 "step": "templates",
                 "host_group_id": str(group.id),
-                "address_prefix": "10.1.{index}",
+                "address_prefix": "10.{index}.1",
                 "ending_octet": "1",
                 "index_start": "10",
                 "index_end": "11",
             },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(group.ip_template.address_template, "10.1.{index}.1")
+        self.assertEqual(group.ip_template.address_template, "10.{index}.1.1")
 
         for team in (self.team, additional_team):
             response = self.client.post(
@@ -415,25 +573,25 @@ class PlatformTests(unittest.TestCase):
                 )
             },
             {
-                self.team.id: "10.1.10.1",
-                additional_team.id: "10.1.11.1",
+                self.team.id: "10.10.1.1",
+                additional_team.id: "10.11.1.1",
             },
         )
         response = self.client.get(
             f"/admin/competitions/{competition.id}/builder?step=teams"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"10.1.10.1", response.data)
-        self.assertIn(b"10.1.11.1", response.data)
+        self.assertIn(b"10.10.1.1", response.data)
+        self.assertIn(b"10.11.1.1", response.data)
         self.assertNotIn(b"Ubuntu1 IPs", response.data)
-        self.assertIn(b"10.1.{index}.1", response.data)
+        self.assertIn(b"10.{index}.1.1", response.data)
 
     def test_score_check_step_opens_every_missing_group_check_template(self):
         competition = Competition(name="Required Check Templates")
         template = IPTemplate(
             competition=competition,
             name="Ubuntu1 IPs",
-            address_template="10.1.{index}.1",
+            address_template="10.{index}.1.1",
             index_start=10,
             index_end=10,
         )
@@ -540,10 +698,16 @@ class PlatformTests(unittest.TestCase):
             status="active",
         )
         additional_team = Team(name="Red Team")
+        additional_team_user = User(
+            username="scoring-red-team",
+            role="team",
+            team=additional_team,
+        )
+        additional_team_user.set_password("red-team-test-password")
         template = IPTemplate(
             competition=competition,
             name="subnet",
-            address_template="10.1.{index}.1",
+            address_template="10.{index}.1.1",
             index_start=10,
             index_end=10,
         )
@@ -554,7 +718,7 @@ class PlatformTests(unittest.TestCase):
             check_types=["http"],
         )
         competition.teams.extend([self.team, additional_team])
-        db.session.add_all([competition, additional_team])
+        db.session.add_all([competition, additional_team, additional_team_user])
         db.session.flush()
         db.session.add_all(
             [
@@ -608,7 +772,7 @@ class PlatformTests(unittest.TestCase):
         template = IPTemplate(
             competition=competition,
             name="subnet",
-            address_template="10.1.{index}.1",
+            address_template="10.{index}.1.1",
             index_start=10,
             index_end=10,
         )
@@ -708,7 +872,7 @@ class PlatformTests(unittest.TestCase):
                 "action": "save-group-template",
                 "step": "templates",
                 "host_group_id": str(group.id),
-                "address_prefix": "10.1.{index}",
+                "address_prefix": "10.{index}.1",
                 "ending_octet": "256",
                 "index_start": "1",
                 "index_end": "3",
@@ -1995,6 +2159,40 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(ScoreResult.query.count(), 0)
         self.assertEqual(balance_for(self.team.id), Decimal("0.00"))
 
+    def test_scoring_skips_teams_without_accounts(self):
+        competition = Competition(
+            name="Account-linked scoring",
+            status="active",
+        )
+        unlinked_team = Team(name="Unlinked Team")
+        competition.teams.extend((self.team, unlinked_team))
+        service = Service(
+            competition=competition,
+            name="DNS check",
+            check_type="dns",
+            protocol="dns",
+            port=53,
+        )
+        score_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="queued",
+        )
+        db.session.add_all((competition, unlinked_team, service, score_round))
+        db.session.commit()
+
+        with patch(
+            "app.scoring._probe",
+            return_value=(True, "Check passed.", None),
+        ) as probe:
+            process_scoring_round(score_round.id, self.app)
+
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual(
+            ScoreResult.query.with_entities(ScoreResult.team_id).all(),
+            [(self.team.id,)],
+        )
+
     def test_active_competition_scoreboard_api(self):
         competition = Competition(name="Spring Cup", status="active")
         competition.teams.append(self.team)
@@ -2008,7 +2206,14 @@ class PlatformTests(unittest.TestCase):
 
     def test_scoreboard_shows_status_matrix_and_zero_score_teams(self):
         competition = Competition(name="Live Board", status="active")
-        second_team = Team(name="Red Team")
+        self.team.name = "Team02"
+        second_team = Team(name="Team01")
+        second_team_user = User(
+            username="team01",
+            role="team",
+            team=second_team,
+        )
+        second_team_user.set_password("team01-test-password")
         group = HostGroup(competition=competition, name="Ubuntu")
         ping = Service(
             competition=competition,
@@ -2034,7 +2239,9 @@ class PlatformTests(unittest.TestCase):
             status="completed",
         )
         competition.teams.extend((self.team, second_team))
-        db.session.add_all((competition, second_team, group, ping, http, score_round))
+        db.session.add_all(
+            (competition, second_team, second_team_user, group, ping, http, score_round)
+        )
         db.session.flush()
         db.session.add_all(
             (
@@ -2068,10 +2275,11 @@ class PlatformTests(unittest.TestCase):
         self.assertIn(b'class="topbar"', response.data)
         self.assertIn(b'class="footer"', response.data)
         self.assertNotIn(b'>Competition</label>', response.data)
-        self.assertIn(b"Blue Team", response.data)
-        self.assertIn(b"Red Team", response.data)
-        self.assertIn(b"2</td>", response.data)
-        self.assertIn(b"0</td>", response.data)
+        self.assertIn(b"Team01", response.data)
+        self.assertIn(b"Team02", response.data)
+        self.assertLess(response.data.index(b"Team01"), response.data.index(b"Team02"))
+        self.assertNotIn(b"Rank", response.data)
+        self.assertNotIn(b"Points", response.data)
         self.assertNotIn(b'http-equiv="refresh"', response.data)
 
     def test_scoreboard_live_endpoint_supports_etag_updates(self):
@@ -2115,6 +2323,106 @@ class PlatformTests(unittest.TestCase):
         unchanged = self.client.get(url, headers={"If-None-Match": etag})
         self.assertEqual(unchanged.status_code, 304)
 
+    def test_scoreboards_exclude_unlinked_teams_and_etag_tracks_account_link(self):
+        competition = Competition(name="Account-linked teams", status="active")
+        unlinked_team = Team(name="Nonexistent Team")
+        group = HostGroup(competition=competition, name="Ubuntu")
+        service = Service(
+            competition=competition,
+            host_group=group,
+            name="Ubuntu PING",
+            check_type="ping",
+            protocol="ping",
+            port=0,
+        )
+        score_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="completed",
+        )
+        competition.teams.extend((self.team, unlinked_team))
+        db.session.add_all((competition, group, service, score_round, unlinked_team))
+        db.session.flush()
+        db.session.add_all(
+            (
+                ScoreResult(
+                    score_round=score_round,
+                    team=self.team,
+                    service=service,
+                    passed=True,
+                    points=1,
+                ),
+                ScoreResult(
+                    score_round=score_round,
+                    team=unlinked_team,
+                    service=service,
+                    passed=True,
+                    points=1,
+                ),
+            )
+        )
+        db.session.commit()
+
+        url = f"/scoreboard/live/{competition.id}"
+        initial = self.client.get(url)
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(
+            [team["name"] for team in initial.json["teams"]],
+            ["Blue Team"],
+        )
+        etag = initial.headers["ETag"]
+
+        page = self.client.get("/scoreboard")
+        self.assertIn(b"Blue Team", page.data)
+        self.assertNotIn(b"Nonexistent Team", page.data)
+        api_response = self.client.get(
+            f"/api/v1/competitions/{competition.id}/scoreboard"
+        )
+        self.assertEqual(
+            [row["team"] for row in api_response.json["standings"]],
+            ["Blue Team"],
+        )
+        self.login("admin", "another-long-test-password")
+        for path in (
+            "/admin/competitions",
+            f"/admin/competitions/{competition.id}",
+            f"/admin/competitions/{competition.id}/builder?step=teams",
+        ):
+            admin_page = self.client.get(path)
+            self.assertEqual(admin_page.status_code, 200)
+            self.assertNotIn(b"Nonexistent Team", admin_page.data)
+
+        linked_user = User(username="new-team-login", role="team", team=unlinked_team)
+        linked_user.set_password("new-team-password")
+        db.session.add(linked_user)
+        db.session.commit()
+        refreshed = self.client.get(url, headers={"If-None-Match": etag})
+
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertEqual(
+            {team["name"] for team in refreshed.json["teams"]},
+            {"Blue Team", "Nonexistent Team"},
+        )
+
+    def test_builder_rejects_enrolling_a_team_without_an_account(self):
+        competition = Competition(name="Enrollment guard")
+        unlinked_team = Team(name="Unlinked Team")
+        db.session.add_all((competition, unlinked_team))
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.post(
+            f"/admin/competitions/{competition.id}/builder?step=teams",
+            data={
+                "action": "enroll-team",
+                "step": "teams",
+                "team_id": str(unlinked_team.id),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(unlinked_team, competition.teams)
+
     def test_scoreboard_competition_selector_is_admin_controlled(self):
         first = Competition(name="A Default Board", status="active")
         second = Competition(name="B Optional Board", status="active")
@@ -2144,6 +2452,75 @@ class PlatformTests(unittest.TestCase):
             db.session.get(PlatformSetting, 1).scoreboard_competition_selector_enabled
         )
 
+    def test_archived_scoreboard_is_only_listed_in_management_controls(self):
+        competition = Competition(
+            name="Archived board",
+            status="active",
+            next_round_at=None,
+        )
+        competition.teams.append(self.team)
+        score_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="queued",
+        )
+        db.session.add_all([competition, score_round])
+        db.session.commit()
+        competition_id = competition.id
+        round_id = score_round.id
+
+        self.login("admin", "another-long-test-password")
+        response = self.client.post(
+            f"/admin/competitions/{competition_id}/archive"
+        )
+
+        self.assertEqual(response.status_code, 302)
+        archived = db.session.get(Competition, competition_id)
+        self.assertTrue(archived.is_archived)
+        self.assertEqual(archived.status, "paused")
+        self.assertEqual(archived.archived_status, "active")
+        competitions_page = self.client.get("/admin/competitions").data
+        scoreboard_rows = competitions_page.split(b"<tbody>")[-1].split(
+            b"</tbody>",
+            1,
+        )[0]
+        self.assertNotIn(b"Archived board", scoreboard_rows)
+        self.assertNotIn(b"Archived board", self.client.get("/admin/").data)
+        self.assertNotIn(b"Archived board", self.client.get("/scoreboard").data)
+        self.assertNotIn(
+            competition_id,
+            [
+                board["id"]
+                for board in self.client.get("/api/v1/competitions").json["competitions"]
+            ],
+        )
+        self.assertEqual(
+            self.client.get(f"/scoreboard/live/{competition_id}").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/api/v1/competitions/{competition_id}/scoreboard"
+            ).status_code,
+            404,
+        )
+        self.assertIn(
+            b"Archived board",
+            self.client.get("/admin/management-controls").data,
+        )
+        self.assertEqual(claim_next_round(self.app), None)
+
+        response = self.client.post(
+            f"/admin/competitions/{competition_id}/unarchive"
+        )
+
+        self.assertEqual(response.status_code, 302)
+        restored = db.session.get(Competition, competition_id)
+        self.assertFalse(restored.is_archived)
+        self.assertEqual(restored.status, "active")
+        self.assertIsNotNone(restored.next_round_at)
+        self.assertEqual(claim_next_round(self.app), round_id)
+
     def test_team_check_credentials_are_scoped_and_saved_encrypted(self):
         competition = Competition(name="Team Credentials", status="active")
         own_group = HostGroup(competition=competition, name="Ubuntu")
@@ -2168,6 +2545,12 @@ class PlatformTests(unittest.TestCase):
             port=5986,
         )
         other_team = Team(name="Red Team")
+        other_team_user = User(
+            username="credential-red-team",
+            role="team",
+            team=other_team,
+        )
+        other_team_user.set_password("red-team-test-password")
         own_host = Host(
             competition=competition,
             team=self.team,
@@ -2182,7 +2565,17 @@ class PlatformTests(unittest.TestCase):
         )
         competition.teams.extend((self.team, other_team))
         db.session.add_all(
-            (competition, own_group, other_group, service, other_service, other_team, own_host, other_host)
+            (
+                competition,
+                own_group,
+                other_group,
+                service,
+                other_service,
+                other_team,
+                other_team_user,
+                own_host,
+                other_host,
+            )
         )
         db.session.commit()
         self.login("blue", "a-long-test-password")
@@ -2261,6 +2654,12 @@ class PlatformTests(unittest.TestCase):
         competition = Competition(name="Team Credential Scoring", status="active")
         group = HostGroup(competition=competition, name="Ubuntu")
         other_team = Team(name="Red Team")
+        other_team_user = User(
+            username="credential-scoring-red-team",
+            role="team",
+            team=other_team,
+        )
+        other_team_user.set_password("red-team-test-password")
         service = Service(
             competition=competition,
             host_group=group,
@@ -2282,7 +2681,18 @@ class PlatformTests(unittest.TestCase):
         )
         score_round = ScoreRound(competition=competition, number=1, status="queued")
         competition.teams.extend((self.team, other_team))
-        db.session.add_all((competition, group, other_team, service, *hosts, configuration, score_round))
+        db.session.add_all(
+            (
+                competition,
+                group,
+                other_team,
+                other_team_user,
+                service,
+                *hosts,
+                configuration,
+                score_round,
+            )
+        )
         db.session.commit()
         seen_jobs = []
 

@@ -16,6 +16,7 @@ def schedule_due_rounds(flask_app=None):
         due = (
             Competition.query.filter(
                 Competition.status == "active",
+                Competition.is_archived.is_(False),
                 (Competition.next_round_at.is_(None))
                 | (Competition.next_round_at <= now),
             )
@@ -43,6 +44,7 @@ def claim_next_round(flask_app=None):
     with app.app_context():
         score_round = (
             ScoreRound.query.filter_by(status="queued")
+            .filter(ScoreRound.competition.has(Competition.is_archived.is_(False)))
             .order_by(ScoreRound.id)
             .with_for_update(skip_locked=True)
             .first()

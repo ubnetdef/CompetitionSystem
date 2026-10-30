@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Build {{ competition.name }} · Competition System{% endblock %}
+{% block title %}Build {{ competition.name }} · UBNETDEF{% endblock %}
 {% block content %}
 {% set step_labels = {
   "details": "Scoreboard",
@@ -131,10 +131,10 @@
 <section class="panel builder-panel">
   <p class="eyebrow">STEP 3 · IP ADDRESS TEMPLATES</p>
   <h2>Set one address pattern per device group</h2>
-  <p class="muted">Configure each group's IPv4 pattern and ending octet. For example, a pattern of <code>10.1.{index}</code> with ending octet <code>20</code> generates addresses from <code>10.1.{index}.20</code>. Team indexes are assigned in ascending team-ID order.</p>
+  <p class="muted">Configure each group's IPv4 pattern and ending octet. For example, a pattern of <code>10.{index}.1</code> with ending octet <code>20</code> generates addresses from <code>10.{index}.1.20</code>. Team indexes are assigned in ascending team-ID order.</p>
 </section>
 {% for group in host_groups %}
-  {% set pattern_parts = group.ip_template.address_template.rsplit('.', 1) if group.ip_template else ['10.1.{index}', '1'] %}
+  {% set pattern_parts = group.ip_template.address_template.rsplit('.', 1) if group.ip_template else ['10.{index}.1', '1'] %}
   <section class="panel form-panel section-block">
     <h3>{{ group.name }}</h3>
     <form method="post">
@@ -145,7 +145,7 @@
       <div class="form-row">
         <div>
           <label for="address_prefix_{{ group.id }}">IPv4 pattern before ending octet</label>
-          <input id="address_prefix_{{ group.id }}" name="address_prefix" value="{{ pattern_parts[0] }}" placeholder="10.1.{index}" required pattern="[^{}]*\{index\}[^{}]*">
+          <input id="address_prefix_{{ group.id }}" name="address_prefix" value="{{ pattern_parts[0] }}" placeholder="10.{index}.1" required pattern="[^{}]*\{index\}[^{}]*">
         </div>
         <div>
           <label for="ending_octet_{{ group.id }}">Ending IP octet</label>

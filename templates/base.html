@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Competition System{% endblock %}</title>
+  <title>{% block title %}UBNETDEF{% endblock %}</title>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <header class="topbar">
-    <a class="brand" href="{{ site_links.engine }}">COMPETITION<span> SYSTEM</span></a>
+    <a class="brand" href="{{ site_links.engine }}" aria-label="UBNETDEF home">
+      <img class="brand-logo" src="{{ url_for('static', filename='ubnetdef-logo.svg') }}" alt="UBNETDEF">
+    </a>
     <nav aria-label="Main navigation">
       {% if not current_user.is_authenticated or current_user.role != 'banker' %}
         <a href="{{ site_links.engine }}/scoreboard">Scoreboard</a>
@@ -51,7 +53,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">
-    <span>Competition System</span>
+    <img class="footer-logo" src="{{ url_for('static', filename='ubnetdef-logo.svg') }}" alt="UBNETDEF">
     <span>Scoring · Banking · Store</span>
   </footer>
 </body>

@@ -571,9 +571,17 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
             return
 
         competition = db.session.get(Competition, score_round.competition_id)
-        if competition is None or competition.status != "active":
+        if (
+            competition is None
+            or competition.status != "active"
+            or competition.is_archived
+        ):
             score_round.status = "failed"
-            score_round.error_message = "Competition was no longer active when this round began."
+            score_round.error_message = (
+                "Scoreboard was archived before this round began."
+                if competition is not None and competition.is_archived
+                else "Competition was no longer active when this round began."
+            )
             score_round.completed_at = datetime.now(timezone.utc)
             db.session.commit()
             return
@@ -582,7 +590,7 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
         if score_round.started_at is None:
             score_round.started_at = datetime.now(timezone.utc)
         payout_per_point = competition.payout_per_point
-        teams = list(competition.teams)
+        teams = list(competition.teams_with_accounts)
         hosts = {
             (host.team_id, host.host_group_id): host.address
             for host in Host.query.filter_by(competition_id=competition.id).all()

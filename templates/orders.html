@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Orders · Competition System{% endblock %}
+{% block title %}Orders · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row"><div><p class="eyebrow">{{ "FULFILLMENT" if is_admin else "TEAM STORE" }}</p><h1>{{ "Order management" if is_admin else "My orders" }}</h1><p>{{ "Review team requests, mark fulfilled orders, or issue refunds." if is_admin else "Track the items your team has requested." }}</p></div>
   {% if is_admin %}<div class="heading-actions"><a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.catalog') }}">Storefront</a></div>{% else %}<a class="button button-secondary" href="{{ url_for('store.catalog') }}">Back to store</a>{% endif %}

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Management Controls · Competition System{% endblock %}
+{% block title %}Management Controls · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
-  <div><p class="eyebrow">PLATFORM SETTINGS</p><h1>Management controls</h1><p>Choose which public scoreboard actions are available.</p></div>
+  <div><p class="eyebrow">PLATFORM SETTINGS</p><h1>Management controls</h1><p>Choose public scoreboard options and restore archived boards.</p></div>
   <div class="heading-actions"><a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a></div>
 </section>
 <form class="panel form-panel management-controls-form" method="post">
@@ -15,4 +15,21 @@
   </label>
   <div class="builder-actions"><button class="button button-primary" type="submit">Save controls</button></div>
 </form>
+<section class="section-block archived-boards">
+  <div class="section-heading"><div><p class="eyebrow">RETAINED SCOREBOARDS</p><h2>Archived boards</h2></div></div>
+  <p class="muted">Archived boards are hidden from all other menus and do not score. Restore a board here to return it to its previous status.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Scoreboard</th><th>Previous status</th><th>Teams</th><th>Checks</th><th>Rounds</th><th>Action</th></tr></thead>
+    <tbody>{% for board in archived_boards %}
+      <tr>
+        <td><strong>{{ board.name }}</strong></td>
+        <td>{{ (board.archived_status or board.status)|title }}</td>
+        <td>{{ board.teams_with_accounts|length }}</td>
+        <td>{{ board.services|length }}</td>
+        <td>{{ board.round_number }}</td>
+        <td><form method="post" action="{{ url_for('admin.unarchive_competition', competition_id=board.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small" type="submit">Restore</button></form></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="table-empty">No boards are archived.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Admin · Competition System{% endblock %}
+{% block title %}Admin · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
   <div><p class="eyebrow">PLATFORM CONTROL</p><h1>Admin overview</h1><p>Manage competition setup, team access, and store operations.</p></div>
@@ -27,7 +27,7 @@
           <tr>
             <td><strong>{{ competition.name }}</strong><small class="table-subtext">{{ competition.interval_seconds }} sec rounds</small></td>
             <td><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span></td>
-            <td>{{ competition.teams|length }}</td>
+            <td>{{ competition.teams_with_accounts|length }}</td>
             <td>{{ competition.services|length }} checks</td>
             <td><a class="table-action" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Manage →</a></td>
           </tr>

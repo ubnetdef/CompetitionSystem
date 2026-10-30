@@ -17,16 +17,19 @@ from .check_catalog import (
 from .check_secrets import decrypt_credentials, encrypt_credentials
 from .extensions import db
 from .models import (
+    BankTransaction,
     Competition,
     Host,
     HostGroup,
     IPTemplate,
+    Order,
     ScoreRound,
     ScoreResult,
     Service,
     ServiceGroup,
     PlatformSetting,
     Team,
+    TeamServiceConfig,
     User,
 )
 from .security import roles_required
@@ -55,9 +58,15 @@ def dashboard():
     return render_template(
         "admin_dashboard.html",
         user_count=User.query.count(),
-        team_count=Team.query.count(),
-        competitions=Competition.query.order_by(Competition.created_at.desc()).all(),
-        recent_rounds=ScoreRound.query.order_by(ScoreRound.id.desc()).limit(8).all(),
+        team_count=User.query.filter_by(role="team").count(),
+        competitions=Competition.query.filter_by(is_archived=False)
+        .order_by(Competition.created_at.desc())
+        .all(),
+        recent_rounds=ScoreRound.query.join(Competition)
+        .filter(Competition.is_archived.is_(False))
+        .order_by(ScoreRound.id.desc())
+        .limit(8)
+        .all(),
     )
 
 
@@ -80,6 +89,9 @@ def management_controls():
         scoreboard_competition_selector_enabled=bool(
             settings and settings.scoreboard_competition_selector_enabled
         ),
+        archived_boards=Competition.query.filter_by(is_archived=True)
+        .order_by(Competition.created_at.desc())
+        .all(),
     )
 
 
@@ -140,6 +152,7 @@ def users():
         users=User.query.order_by(User.created_at.desc()).all(),
         unassigned_teams=Team.query.filter(~Team.user.has()).order_by(Team.name).all(),
         is_admin=_is_admin(),
+        admin_count=User.query.filter_by(role="admin").count(),
     )
 
 
@@ -176,6 +189,107 @@ def toggle_user(user_id):
         user.is_active = not user.is_active
         db.session.commit()
         flash(f"Account '{user.username}' {'enabled' if user.is_active else 'disabled'}.", "success")
+    return redirect(url_for("admin.users"))
+
+
+@admin_bp.post("/users/<int:user_id>/username")
+@roles_required("admin", "organizer")
+def update_username(user_id):
+    user = db.session.get(User, user_id)
+    username = request.form.get("username", "").strip()
+    if user is None:
+        flash("That account no longer exists.", "error")
+    elif current_user_role_is_limited() and user.role in {"admin", "organizer"}:
+        flash("Organizers cannot edit another administrator or organizer account.", "error")
+    elif not username or len(username) > 80:
+        flash("Username must contain between 1 and 80 characters.", "error")
+    elif User.query.filter(
+        func.lower(User.username) == username.lower(),
+        User.id != user.id,
+    ).first():
+        flash("That username is already in use.", "error")
+    else:
+        old_username = user.username
+        user.username = username
+        try:
+            db.session.commit()
+            flash(f"Username changed from '{old_username}' to '{username}'.", "success")
+        except IntegrityError:
+            db.session.rollback()
+            flash("That username is already in use. No account was changed.", "error")
+    return redirect(url_for("admin.users"))
+
+
+@admin_bp.post("/users/<int:user_id>/delete")
+@roles_required("admin", "organizer")
+def delete_user(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        flash("That account no longer exists.", "error")
+        return redirect(url_for("admin.users"))
+    if user.id == current_user.id:
+        flash("You cannot remove the account you are currently using.", "error")
+        return redirect(url_for("admin.users"))
+    if current_user_role_is_limited() and user.role in {"admin", "organizer"}:
+        flash("Organizers cannot remove another administrator or organizer account.", "error")
+        return redirect(url_for("admin.users"))
+    if user.role == "admin" and User.query.filter_by(role="admin").count() <= 1:
+        flash("The last administrator account cannot be removed.", "error")
+        return redirect(url_for("admin.users"))
+
+    username = user.username
+    team = user.team
+    try:
+        BankTransaction.query.filter_by(created_by_id=user.id).update(
+            {BankTransaction.created_by_id: None},
+            synchronize_session=False,
+        )
+        Order.query.filter_by(completed_by_id=user.id).update(
+            {Order.completed_by_id: None},
+            synchronize_session=False,
+        )
+        if team is not None:
+            BankTransaction.query.filter_by(team_id=team.id).delete(
+                synchronize_session=False
+            )
+            for order in Order.query.filter_by(team_id=team.id).all():
+                db.session.delete(order)
+            score_result_ids = db.session.query(ScoreResult.id).filter_by(
+                team_id=team.id
+            )
+            BankTransaction.query.filter(
+                BankTransaction.score_result_id.in_(score_result_ids)
+            ).delete(synchronize_session=False)
+            TeamServiceConfig.query.filter_by(team_id=team.id).delete(
+                synchronize_session=False
+            )
+            Host.query.filter_by(team_id=team.id).delete(
+                synchronize_session=False
+            )
+            ScoreResult.query.filter_by(team_id=team.id).delete(
+                synchronize_session=False
+            )
+            team.competitions.clear()
+            user.team = None
+
+        db.session.delete(user)
+        db.session.flush()
+        if team is not None:
+            db.session.delete(team)
+        db.session.commit()
+        flash(
+            f"Account '{username}' and its linked team data were permanently removed.",
+            "success",
+        )
+    except IntegrityError:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Could not remove account %s and related data.", user_id
+        )
+        flash(
+            "Account removal failed because related records could not be safely removed. Nothing was changed.",
+            "error",
+        )
     return redirect(url_for("admin.users"))
 
 
@@ -221,9 +335,55 @@ def competitions():
 
     return render_template(
         "competitions.html",
-        competitions=Competition.query.order_by(Competition.created_at.desc()).all(),
+        competitions=Competition.query.filter_by(is_archived=False)
+        .order_by(Competition.created_at.desc())
+        .all(),
         config=current_app.config,
     )
+
+
+@admin_bp.post("/competitions/<int:competition_id>/archive")
+@roles_required("admin", "organizer")
+def archive_competition(competition_id):
+    competition = db.session.get(Competition, competition_id)
+    if competition is None:
+        flash("That scoreboard no longer exists.", "error")
+    elif competition.is_archived:
+        flash("That scoreboard is already archived.", "info")
+    else:
+        competition.archived_status = competition.status
+        if competition.status == "active":
+            competition.status = "paused"
+        competition.is_archived = True
+        competition.next_round_at = None
+        db.session.commit()
+        flash(
+            f"Scoreboard '{competition.name}' archived. Restore it from Management Controls → Archived boards.",
+            "success",
+        )
+    return redirect(url_for("admin.competitions"))
+
+
+@admin_bp.post("/competitions/<int:competition_id>/unarchive")
+@roles_required("admin", "organizer")
+def unarchive_competition(competition_id):
+    competition = db.session.get(Competition, competition_id)
+    if competition is None:
+        flash("That archived scoreboard no longer exists.", "error")
+    elif not competition.is_archived:
+        flash("That scoreboard is not archived.", "info")
+    else:
+        competition.status = competition.archived_status or competition.status
+        competition.archived_status = None
+        competition.is_archived = False
+        competition.next_round_at = (
+            datetime.now(timezone.utc)
+            if competition.status == "active"
+            else None
+        )
+        db.session.commit()
+        flash(f"Scoreboard '{competition.name}' restored.", "success")
+    return redirect(url_for("admin.management_controls"))
 
 
 @admin_bp.route(
@@ -232,9 +392,9 @@ def competitions():
 )
 @roles_required("admin", "organizer")
 def competition_builder(competition_id):
-    competition = db.session.get(Competition, competition_id)
+    competition = _get_visible_competition(competition_id)
     if competition is None:
-        flash("That competition no longer exists.", "error")
+        flash("That competition does not exist or is archived.", "error")
         return redirect(url_for("admin.competitions"))
 
     step_names = ("details", "groups", "templates", "teams", "checks", "review")
@@ -328,11 +488,14 @@ def competition_builder(competition_id):
                 )
             )
 
-    enrolled_ids = [team.id for team in competition.teams]
+    enrolled_ids = [team.id for team in competition.teams_with_accounts]
     available_teams = (
-        Team.query.filter(~Team.id.in_(enrolled_ids)).order_by(Team.name).all()
+        Team.query.filter(
+            Team.user.has(),
+            ~Team.id.in_(enrolled_ids),
+        ).order_by(Team.name).all()
         if enrolled_ids
-        else Team.query.order_by(Team.name).all()
+        else Team.query.filter(Team.user.has()).order_by(Team.name).all()
     )
     services = Service.query.filter_by(
         competition_id=competition.id
@@ -432,7 +595,7 @@ def competition_builder(competition_id):
         ).order_by(IPTemplate.name).all(),
         host_groups=host_groups,
         available_teams=available_teams,
-        teams=sorted(competition.teams, key=lambda team: team.id),
+        teams=sorted(competition.teams_with_accounts, key=lambda team: team.id),
         host_matrix={
             team.id: {
                 group.id: Host.query.filter_by(
@@ -442,7 +605,7 @@ def competition_builder(competition_id):
                 ).first()
                 for group in competition.host_groups
             }
-            for team in competition.teams
+            for team in competition.teams_with_accounts
         },
         edit_host_group=edit_host_group,
         services=services,
@@ -504,7 +667,7 @@ def _resolve_dns_expected_output(lookup, record_type):
 
 
 def _builder_progress(competition):
-    teams = sorted(competition.teams, key=lambda team: team.id)
+    teams = sorted(competition.teams_with_accounts, key=lambda team: team.id)
     host_groups = list(competition.host_groups)
     generated_hosts_complete = all(
         Host.query.filter_by(
@@ -605,7 +768,7 @@ def _template_is_valid(ip_template, team_count):
 
 
 def _sync_generated_hosts(competition, host_groups=None, replace_existing=False):
-    teams = sorted(competition.teams, key=lambda team: team.id)
+    teams = sorted(competition.teams_with_accounts, key=lambda team: team.id)
     all_groups = list(competition.host_groups)
     groups_to_sync = all_groups if host_groups is None else list(host_groups)
     group_ids_to_sync = {group.id for group in groups_to_sync}
@@ -709,7 +872,7 @@ def _save_group_template(competition):
         IPTemplate.id != (ip_template.id if ip_template else 0),
     ).first():
         candidate.name = f"{group.name} IPs ({group.id})"
-    if not _template_is_valid(candidate, len(competition.teams)):
+    if not _template_is_valid(candidate, len(competition.teams_with_accounts)):
         flash(
             "Use one {index} placeholder in a valid IPv4 template and provide an index range with enough addresses for every enrolled team (0–255).",
             "error",
@@ -811,6 +974,9 @@ def _enroll_builder_team(competition):
     if team is None:
         flash("Choose an existing team.", "error")
         return
+    if team.user is None:
+        flash("That team has no account and cannot be enrolled in a scoreboard.", "error")
+        return
     if team in competition.teams:
         flash("That team is already enrolled.", "info")
         return
@@ -821,7 +987,10 @@ def _enroll_builder_team(competition):
                 "error",
             )
             return
-        if not _template_is_valid(group.ip_template, len(competition.teams) + 1):
+        if not _template_is_valid(
+            group.ip_template,
+            len(competition.teams_with_accounts) + 1,
+        ):
             flash(
                 f"Template '{group.ip_template.name}' needs a larger index range before another team can be enrolled.",
                 "error",
@@ -879,9 +1048,9 @@ def _save_group_host_address(competition):
 @admin_bp.route("/competitions/<int:competition_id>", methods=["GET", "POST"])
 @roles_required("admin", "organizer")
 def competition_detail(competition_id):
-    competition = db.session.get(Competition, competition_id)
+    competition = _get_visible_competition(competition_id)
     if competition is None:
-        flash("That competition no longer exists.", "error")
+        flash("That competition does not exist or is archived.", "error")
         return redirect(url_for("admin.competitions"))
 
     if request.method == "POST":
@@ -925,8 +1094,16 @@ def competition_detail(competition_id):
             flash("That service check does not exist in this competition.", "error")
             return redirect(url_for("admin.competition_detail", competition_id=competition.id))
 
-    linked_team_ids = [team.id for team in competition.teams]
-    available_teams = Team.query.filter(~Team.id.in_(linked_team_ids)).order_by(Team.name).all() if linked_team_ids else Team.query.order_by(Team.name).all()
+    teams = competition.teams_with_accounts
+    linked_team_ids = [team.id for team in teams]
+    available_teams = (
+        Team.query.filter(
+            Team.user.has(),
+            ~Team.id.in_(linked_team_ids),
+        ).order_by(Team.name).all()
+        if linked_team_ids
+        else Team.query.filter(Team.user.has()).order_by(Team.name).all()
+    )
     rounds = ScoreRound.query.filter_by(competition_id=competition.id).order_by(ScoreRound.number.desc()).limit(20).all()
     team_hosts = {
         host.team_id: host
@@ -940,7 +1117,10 @@ def competition_detail(competition_id):
         )
         .join(ScoreResult, ScoreResult.team_id == Team.id)
         .join(ScoreRound, ScoreResult.round_id == ScoreRound.id)
-        .filter(ScoreRound.competition_id == competition.id)
+        .filter(
+            ScoreRound.competition_id == competition.id,
+            Team.user.has(),
+        )
         .group_by(Team.id, Team.name)
         .order_by(func.sum(ScoreResult.points).desc(), Team.name.asc())
         .all()
@@ -948,6 +1128,7 @@ def competition_detail(competition_id):
     return render_template(
         "competition_detail.html",
         competition=competition,
+        teams=teams,
         available_teams=available_teams,
         rounds=rounds,
         standings=standings,
@@ -973,11 +1154,17 @@ def _add_competition_team(competition):
     if team is None:
         flash("Choose an existing team.", "error")
         return
+    if team.user is None:
+        flash("That team has no account and cannot be enrolled in a scoreboard.", "error")
+        return
     if team in competition.teams:
         flash("That team is already enrolled.", "info")
         return
     for group in competition.host_groups:
-        if not _template_is_valid(group.ip_template, len(competition.teams) + 1):
+        if not _template_is_valid(
+            group.ip_template,
+            len(competition.teams_with_accounts) + 1,
+        ):
             flash(
                 f"Template '{group.ip_template.name}' needs a larger index range before another team can be enrolled.",
                 "error",
@@ -1005,12 +1192,12 @@ def _add_competition_team(competition):
 @admin_bp.post("/competitions/<int:competition_id>/teams/<int:team_id>/host")
 @roles_required("admin", "organizer")
 def set_host(competition_id, team_id):
-    competition = db.session.get(Competition, competition_id)
+    competition = _get_visible_competition(competition_id)
     team = db.session.get(Team, team_id)
     address = request.form.get("address", "").strip()
-    if competition is None or team is None:
+    if competition is None or team is None or team.user is None:
         flash("The competition or team no longer exists.", "error")
-    elif team not in competition.teams:
+    elif team not in competition.teams_with_accounts:
         flash("Enroll this team before assigning its host.", "error")
     elif not valid_host(address):
         flash("Enter a hostname or IP address without a scheme, port, or path.", "error")
@@ -1514,7 +1701,7 @@ def _update_status(competition, status=None):
     if status not in {"draft", "active", "paused", "completed"}:
         flash("Choose a valid competition status.", "error")
         return
-    if status == "active" and not competition.teams:
+    if status == "active" and not competition.teams_with_accounts:
         flash("Enroll at least one team before activating the competition.", "error")
         return
     if status == "active" and not competition.services:
@@ -1534,6 +1721,13 @@ def _is_admin():
     from flask_login import current_user
 
     return current_user.role == "admin"
+
+
+def _get_visible_competition(competition_id):
+    competition = db.session.get(Competition, competition_id)
+    if competition is None or competition.is_archived:
+        return None
+    return competition
 
 
 def current_user_role_is_limited():

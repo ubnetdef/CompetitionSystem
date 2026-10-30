@@ -38,6 +38,18 @@ The default preview deliberately avoids public ports 80/443 so it can be evaluat
 
 To migrate an existing installation, securely copy its `.env` and database backup to the VM first. Run `sudo env DATABASE_IMPORT_ONLY=true bash scripts/setup.sh` to install prerequisites and start PostgreSQL without starting the web app or scoring worker. Restore the database, then run `sudo bash scripts/setup.sh`; the existing administrator account will be detected and preserved.
 
+### Import the local competition database to a VM
+
+On Windows, run `scripts/import_competition.ps1` from a configured local checkout. The script starts the local Compose `database` service if needed, verifies that the source has competition and team data, then exports the complete PostgreSQL database, including every competition, account, host/check, encrypted credential, scoring round/result, bank record, and store/order record. It securely transfers the export and the source `SECRET_KEY` and `CHECK_CREDENTIAL_KEY` over SSH; target database and domain settings in the VM's `.env` are preserved.
+
+The target VM must already have this project installed, a configured `.env`, a running SSH service, and a user with `sudo` access. The script uses strict SSH host-key checking, so verify a reinstalled VM's host-key fingerprint and update your local `known_hosts` entry before connecting. It saves a private backup of the existing VM database and `.env`, then requires you to type `REPLACE <user>@<host>` before changing anything. It replaces the VM database, marks interrupted running rounds as failed, rebuilds the web and scoring-worker services, and checks application readiness. Database and environment backups remain under `~/competition-backups/imports`; do not commit or share them.
+
+Example:
+
+```powershell
+.\scripts\import_competition.ps1 -TargetHost 192.168.8.200 -TargetUser compadmin -SshKeyPath "$env:USERPROFILE\.ssh\competition-vm"
+```
+
 ## Public deployment and cutover
 
 Before public access, make sure:
@@ -68,6 +80,8 @@ Caddy obtains and renews TLS certificates for the configured site hostnames. The
 3. Create a scoreboard through the guided builder: enter its details, create device groups and select their supported check types, configure each group's IPv4 `{index}` pattern and ending octet, enroll teams to generate one host per group, configure a score-check template for every selected check type in each group, then review the setup. The score-check step shows per-group readiness; missing, disabled, paused, or unexpected checks need attention before review.
 4. Activate the competition. Scoring workers schedule rounds at the configured interval, claim queued rounds from PostgreSQL, execute checks concurrently, and record results and credit deposits. If workers are stopped, scoring pauses; after restart, workers resume from the competition's due schedule. A round already claimed by a worker that exits unexpectedly is not automatically reclaimed.
 5. Add and publish store items. Team purchases use simulated credits, produce ledger transactions, and remain pending until an organizer completes or refunds the order.
+
+Administrators and organizers can rename accounts from **Accounts and teams**. Removing a team account permanently deletes its linked team, host assignments, check settings, scoring results, bank transactions, and store orders; staff audit references to a removed staff account are cleared. Scoreboards can be archived from the scoreboard list. Archiving pauses an active scoreboard, hides it from other menus, and retains its configuration and history; archived boards can only be viewed and restored under **Management Controls → Archived boards**. Restoring an active board resumes scoring.
 
 The first administrator can also be created later with:
 
@@ -120,7 +134,9 @@ Each SSH, WinRM, LDAP, SQL, FTP, and DNS check form has a collapsed **Legacy com
 
 ### Mirroring the live Engine scoreboard
 
-A mirror of the live Engine scoreboard ("UBNetDef Engine Mirror": 15 teams, 7 device groups, 105 hosts as `10.1.{team}.{octet}`, 14 check templates) is active. Scoring requires network access to those hosts. Team accounts and credentials were not copied from the live Engine, and where live per-team passwords differed (Dev Server SQL, WebApp FTP), the majority password was used.
+A mirror of the live Engine scoreboard ("UBNetDef Engine Mirror": 15 teams, 7 device groups, 105 hosts as `10.{team}.1.{octet}`, 14 check templates) is active. Scoring requires network access to those hosts. Team accounts and credentials were not copied from the live Engine, and where live per-team passwords differed (Dev Server SQL, WebApp FTP), the majority password was used.
+
+Existing mirrors created with the earlier `10.1.{team}.{octet}` layout can be corrected by running `sudo bash scripts/update_mirror_ip_layout.sh` from the project directory. The script backs up PostgreSQL under `/var/backups/competition-ip-layout`, pauses the scoring worker, verifies the active mirror's expected host and template counts, updates its generated addresses, and restarts the worker.
 
 To edit a configured check, use **Edit** in the competition's service-check table. Its type is fixed, while supported settings, points, timeout, boost, pause/hide status, and group assignment can be updated. Credential fields stay blank; leave both blank to retain the encrypted credentials, or enter both to replace them. Legacy TCP checks can be edited but cannot be newly created.
 

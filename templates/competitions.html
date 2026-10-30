@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Competitions · Competition System{% endblock %}
+{% block title %}Competitions · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
   <div><p class="eyebrow">SCORING ENGINE</p><h1>Scoreboards</h1><p>Create and manage scoreboards with guided setup for IP templates, device groups, team hosts, and score checks.</p></div>
@@ -32,10 +32,10 @@
 </section>
 <section class="section-block">
   <div class="section-heading"><div><p class="eyebrow">ALL EVENTS</p><h2>Scoreboard list</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Name</th><th>Status</th><th>Teams</th><th>Checks</th><th>Rounds</th><th>Manage</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>Name</th><th>Status</th><th>Teams</th><th>Checks</th><th>Rounds</th><th>Manage</th><th>Archive</th></tr></thead><tbody>
     {% for competition in competitions %}
-      <tr><td><strong>{{ competition.name }}</strong></td><td><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span></td><td>{{ competition.teams|length }}</td><td>{{ competition.services|length }}</td><td>{{ competition.round_number }}</td><td class="builder-row-actions"><a class="table-action" href="{{ url_for('admin.competition_builder', competition_id=competition.id) }}">Open builder</a><a class="table-action" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Advanced settings</a></td></tr>
-    {% else %}<tr><td colspan="6" class="table-empty">No scoreboards yet. Create one to begin.</td></tr>{% endfor %}
+      <tr><td><strong>{{ competition.name }}</strong></td><td><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span></td><td>{{ competition.teams_with_accounts|length }}</td><td>{{ competition.services|length }}</td><td>{{ competition.round_number }}</td><td class="builder-row-actions"><a class="table-action" href="{{ url_for('admin.competition_builder', competition_id=competition.id) }}">Open builder</a><a class="table-action" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Advanced settings</a></td><td><form method="post" action="{{ url_for('admin.archive_competition', competition_id=competition.id) }}" data-confirm="Remove '{{ competition.name }}' from the active menus? It will be archived, stop scoring, and remain recoverable under Management Controls → Archived boards." onsubmit="return confirm(this.dataset.confirm)"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small" type="submit">Remove</button></form></td></tr>
+    {% else %}<tr><td colspan="7" class="table-empty">No scoreboards yet. Create one to begin.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}

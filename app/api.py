@@ -12,7 +12,10 @@ api_bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 @api_bp.get("/competitions")
 def competitions():
-    active = Competition.query.filter_by(status="active").order_by(Competition.name).all()
+    active = Competition.query.filter_by(
+        status="active",
+        is_archived=False,
+    ).order_by(Competition.name).all()
     return jsonify(
         competitions=[
             {
@@ -31,7 +34,11 @@ def competitions():
 @api_bp.get("/competitions/<int:competition_id>/scoreboard")
 def competition_scoreboard(competition_id):
     competition = db.session.get(Competition, competition_id)
-    if competition is None or competition.status not in {"active", "completed"}:
+    if (
+        competition is None
+        or competition.is_archived
+        or competition.status not in {"active", "completed"}
+    ):
         return jsonify(error="Competition not found or not publicly available."), 404
 
     standings = (
@@ -42,7 +49,10 @@ def competition_scoreboard(competition_id):
         )
         .join(ScoreResult, ScoreResult.team_id == Team.id)
         .join(ScoreRound, ScoreResult.round_id == ScoreRound.id)
-        .filter(ScoreRound.competition_id == competition.id)
+        .filter(
+            ScoreRound.competition_id == competition.id,
+            Team.user.has(),
+        )
         .group_by(Team.id, Team.name)
         .order_by(func.sum(ScoreResult.points).desc(), Team.name.asc())
         .all()

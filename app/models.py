@@ -66,6 +66,8 @@ class Competition(db.Model):
     name = db.Column(db.String(120), nullable=False)
     description = db.Column(db.Text, nullable=False, default="")
     status = db.Column(db.String(20), nullable=False, default="draft", index=True)
+    is_archived = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    archived_status = db.Column(db.String(20))
     interval_seconds = db.Column(db.Integer, nullable=False, default=60)
     payout_per_point = db.Column(db.Numeric(12, 2), nullable=False, default=Decimal("10.00"))
     round_number = db.Column(db.Integer, nullable=False, default=0)
@@ -78,6 +80,10 @@ class Competition(db.Model):
     host_groups = db.relationship("HostGroup", back_populates="competition", cascade="all, delete-orphan")
     services = db.relationship("Service", back_populates="competition", cascade="all, delete-orphan")
     rounds = db.relationship("ScoreRound", back_populates="competition", cascade="all, delete-orphan")
+
+    @property
+    def teams_with_accounts(self):
+        return [team for team in self.teams if team.user is not None]
 
 
 class Host(db.Model):

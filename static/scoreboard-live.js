@@ -31,7 +31,7 @@
     const headerRow = document.createElement("tr");
     const teamHeading = document.createElement("th");
     teamHeading.className = "sticky-team";
-    teamHeading.textContent = "Rank · Team";
+    teamHeading.textContent = "Team";
     headerRow.append(teamHeading);
     snapshot.services.forEach((service) => {
       const heading = document.createElement("th");
@@ -44,10 +44,6 @@
       heading.append(group, checkType);
       headerRow.append(heading);
     });
-    const pointsHeading = document.createElement("th");
-    pointsHeading.className = "number score-total-heading";
-    pointsHeading.textContent = "Points";
-    headerRow.append(pointsHeading);
     head.replaceChildren(headerRow);
 
     const rows = snapshot.teams.map((team) => {
@@ -55,12 +51,9 @@
       row.dataset.teamId = team.id;
       const teamCell = document.createElement("td");
       teamCell.className = "sticky-team team-board-cell";
-      const rank = document.createElement("span");
-      rank.className = "rank-cell";
-      rank.textContent = String(team.rank).padStart(2, "0");
       const name = document.createElement("strong");
       name.textContent = team.name;
-      teamCell.append(rank, name);
+      teamCell.append(name);
       row.append(teamCell);
 
       snapshot.services.forEach((service) => {
@@ -98,10 +91,6 @@
         row.append(cell);
       });
 
-      const score = document.createElement("td");
-      score.className = "number score-number score-total";
-      score.textContent = String(team.score);
-      row.append(score);
       return row;
     });
     body.replaceChildren(...rows);

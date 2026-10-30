@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Scoreboard · Competition System{% endblock %}
+{% block title %}Scoreboard · UBNETDEF{% endblock %}
 {% block body_class %}scoreboard-page{% endblock %}
 {% block content %}
 <header class="scoreboard-heading">
@@ -22,19 +22,18 @@
     <span class="visually-hidden" data-live-status role="status" aria-live="polite">Connecting to live updates…</span>
     <div class="scoreboard-table-wrap" data-live-board data-live-url="{{ url_for('main.scoreboard_live', competition_id=selected.id) }}" data-poll-ms="5000">
       <table class="scoreboard-table">
-        <thead><tr><th class="sticky-team">Rank · Team</th>
+        <thead><tr><th class="sticky-team">Team</th>
           {% for service in services %}
             <th class="score-check-heading" data-service-id="{{ service.id }}">
               <span>{{ service.host_group.name if service.host_group else "General" }}</span>
               <small>{{ service.check_type|upper }}</small>
             </th>
           {% endfor %}
-          <th class="number score-total-heading">Points</th>
         </tr></thead>
         <tbody>
           {% for row in rows %}
             <tr data-team-id="{{ row.team.id }}">
-              <td class="sticky-team team-board-cell"><span class="rank-cell" data-team-rank>{{ "%02d"|format(loop.index) }}</span><strong data-team-name>{{ row.team.name }}</strong></td>
+              <td class="sticky-team team-board-cell"><strong data-team-name>{{ row.team.name }}</strong></td>
               {% for service in services %}
                 {% set result = latest_results.get((row.team.id, service.id)) %}
                 {% if service.paused %}
@@ -52,9 +51,8 @@
                 {% endif %}
                 <td class="score-result-cell" data-result-status="{{ cell_status }}" data-team-id="{{ row.team.id }}" data-service-id="{{ service.id }}" aria-label="{{ cell_label }}" title="{{ cell_label }}"><span class="visually-hidden">{{ cell_status }}</span></td>
               {% endfor %}
-              <td class="number score-number score-total" data-team-score>{{ row.score }}</td>
             </tr>
-          {% else %}<tr><td colspan="{{ services|length + 2 }}" class="table-empty">No teams have been enrolled.</td></tr>{% endfor %}
+          {% else %}<tr><td colspan="{{ services|length + 1 }}" class="table-empty">No teams have been enrolled.</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>

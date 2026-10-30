@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 56" role="img" aria-labelledby="title">
+  <title id="title">UBNETDEF</title>
+  <g fill="none" stroke="#20d9e8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5">
+    <path d="M27 4 43 12v13c0 11-7 19-16 25C18 44 11 36 11 25V12L27 4Z"/>
+    <path d="M27 15v20M19 22l8 5 8-5M19 33h16"/>
+    <circle cx="27" cy="15" r="2.4" fill="#20d9e8" stroke="none"/>
+    <circle cx="19" cy="22" r="2.4" fill="#20d9e8" stroke="none"/>
+    <circle cx="35" cy="22" r="2.4" fill="#20d9e8" stroke="none"/>
+    <circle cx="19" cy="33" r="2.4" fill="#20d9e8" stroke="none"/>
+    <circle cx="35" cy="33" r="2.4" fill="#20d9e8" stroke="none"/>
+  </g>
+  <text x="58" y="37" fill="#eef2f5" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="800" letter-spacing="2">UBNETDEF</text>
+</svg>
