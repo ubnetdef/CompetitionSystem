@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Bank · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading"><p class="eyebrow">SIMULATED TEAM CREDITS</p><h1>Bank operations</h1><p>Review team balances and record auditable credit or debit adjustments.</p></section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">TEAM ACCOUNTS</p><h2>{{ teams|length }} teams</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Team</th><th>Username</th><th class="number">Balance</th></tr></thead><tbody>
+    {% for team in teams %}<tr><td>{{ team.name }}</td><td>{{ team.user.username if team.user else "No login" }}</td><td class="number score-number">{{ "%.2f"|format(balances[team.id]) }}</td></tr>
+    {% else %}<tr><td colspan="3" class="table-empty">No team accounts exist yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="split-layout section-block">
+  <form class="panel form-panel" method="post" action="{{ url_for('bank.adjust') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p class="eyebrow">MANUAL ADJUSTMENT</p><h2>Record transaction</h2>
+    <label for="team_id">Team</label><select id="team_id" name="team_id" required>{% for team in teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
+    <div class="form-row"><div><label for="kind">Transaction type</label><select id="kind" name="kind"><option value="credit">Credit</option><option value="debit">Debit</option></select></div><div><label for="amount">Amount</label><input id="amount" name="amount" type="number" min="0.01" step="0.01" max="1000000" required></div></div>
+    <label for="description">Reason</label><input id="description" name="description" maxlength="255" required>
+    <button class="button button-primary" type="submit">Save transaction</button>
+  </form>
+  <div class="panel info-panel"><p class="eyebrow">LEDGER NOTES</p><h2>Traceable by design</h2><p>Every adjustment is linked to the staff account that recorded it. Competition scoring credits and store purchases are posted automatically.</p><p>Credits are simulated and have no cash value.</p></div>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">LATEST ACTIVITY</p><h2>Transactions</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Date</th><th>Team</th><th>Type</th><th>Description</th><th>Recorded by</th><th class="number">Amount</th></tr></thead><tbody>
+    {% for transaction in transactions %}
+      <tr><td>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td>{{ transaction.team.name }}</td><td><span class="pill pill-{{ transaction.kind }}">{{ transaction.kind }}</span></td><td>{{ transaction.description }}</td><td>{{ transaction.created_by.username if transaction.created_by else "Scoring engine" }}</td><td class="number {{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ "%.2f"|format(transaction.amount) }}</td></tr>
+    {% else %}<tr><td colspan="6" class="table-empty">No transactions recorded yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

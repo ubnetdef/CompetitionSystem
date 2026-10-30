@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ 'My Checks' if is_team else 'Team Checks' }} · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">TEAM SETTINGS</p><h1>{{ 'My checks' if is_team else 'Team checks' }}</h1><p>Update only the check credentials an organizer has unlocked for your team.</p></div>
+  {% if selected_competition %}<span class="pill pill-active">{{ selected_competition.name }}</span>{% endif %}
+</section>
+{% if competitions %}
+  <form class="filter-form team-check-filters" method="get">
+    <label for="team-check-competition">Competition</label>
+    <select id="team-check-competition" name="competition" onchange="this.form.submit()">
+      {% for competition in competitions %}
+        <option value="{{ competition.id }}" {% if selected_competition and selected_competition.id == competition.id %}selected{% endif %}>{{ competition.name }}</option>
+      {% endfor %}
+    </select>
+    {% if not is_team and selected_competition %}
+      <label for="team-check-team">Team</label>
+      <select id="team-check-team" name="team" onchange="this.form.submit()">
+        {% for team in teams %}
+          <option value="{{ team.id }}" {% if selected_team and selected_team.id == team.id %}selected{% endif %}>{{ team.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
+    <noscript><button class="button button-secondary" type="submit">Show</button></noscript>
+  </form>
+
+  {% if selected_team %}
+    <section class="section-block team-check-section">
+      <div class="section-heading"><div><p class="eyebrow">UNLOCKED CREDENTIALS</p><h2>Score checks for {{ selected_team.name }}</h2></div></div>
+      <div class="team-check-grid">
+        {% for item in services %}
+          {% set service = item.service %}
+          <article class="panel team-check-card">
+            <div class="card-heading">
+              <div><p class="eyebrow">{{ service.host_group.name if service.host_group else 'General check' }}</p><h3>{{ service.name }}</h3></div>
+              <span class="pill">{{ service.check_type|upper }}</span>
+            </div>
+            {% if not item.editable_fields %}
+              <p class="muted">No check fields are unlocked for team editing.</p>
+            {% elif not item.credentials_available %}
+              <p class="flash flash-error">Saved credentials are unavailable. Contact an organizer.</p>
+            {% else %}
+              <form method="post" class="team-check-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="competition" value="{{ selected_competition.id }}">
+                <input type="hidden" name="service_id" value="{{ service.id }}">
+                {% if not is_team %}<input type="hidden" name="team" value="{{ selected_team.id }}">{% endif %}
+                {% if 'username' in item.editable_fields %}
+                  <label for="team-check-username-{{ service.id }}">Username</label>
+                  <input id="team-check-username-{{ service.id }}" name="username" maxlength="120" value="{{ item.username }}" autocomplete="username">
+                {% else %}
+                  <p class="muted">Username is managed by organizers.</p>
+                {% endif %}
+                {% if 'password' in item.editable_fields %}
+                  <label for="team-check-password-{{ service.id }}">New password</label>
+                  <input id="team-check-password-{{ service.id }}" name="password" type="password" maxlength="1024" autocomplete="new-password" placeholder="Leave blank to keep the current password">
+                {% else %}
+                  <p class="muted">Password is managed by organizers.</p>
+                {% endif %}
+                <button class="button button-primary button-small" type="submit">Save check credentials</button>
+              </form>
+            {% endif %}
+          </article>
+        {% else %}
+          <div class="empty-state panel"><h2>No credential checks</h2><p>No credential-based checks are configured for this team in the selected competition.</p></div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {% if hosts %}
+      <section class="section-block team-check-section">
+        <div class="section-heading"><div><p class="eyebrow">SCORING HOSTS</p><h2>Device addresses</h2></div></div>
+        <div class="table-wrap">
+          <table class="team-host-table">
+            <thead><tr><th>Device group</th><th>Current address</th><th>Allowed address</th><th>Access</th></tr></thead>
+            <tbody>
+              {% for host in hosts %}
+                <tr>
+                  <td><strong>{{ host.host_group.name if host.host_group else 'Scoring host' }}</strong></td>
+                  <td>
+                    {% if is_team and host.team_can_edit_address %}
+                      <form class="inline-form team-host-form" method="post" action="{{ url_for('main.update_scoreboard_host', host_id=host.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input aria-label="{{ host.host_group.name if host.host_group else 'Scoring host' }} address" name="address" value="{{ host.address }}" maxlength="255" required>
+                        <button class="button button-secondary button-small" type="submit">Save address</button>
+                      </form>
+                    {% else %}{{ host.address }}{% endif %}
+                  </td>
+                  <td>{{ host.allowed_address_ranges or 'Address editing disabled' }}</td>
+                  <td>{{ 'Address only' if is_team and host.team_can_edit_address else 'Read only' }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+  {% else %}
+    <div class="empty-state panel"><h2>No team selected</h2><p>The selected competition has no enrolled teams.</p></div>
+  {% endif %}
+{% else %}
+  <div class="empty-state panel"><h2>No active competitions</h2><p>Team check management is available when a competition is active.</p></div>
+{% endif %}
+{% endblock %}

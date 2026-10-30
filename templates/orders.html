@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Orders · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row"><div><p class="eyebrow">{{ "FULFILLMENT" if is_admin else "TEAM STORE" }}</p><h1>{{ "Order management" if is_admin else "My orders" }}</h1><p>{{ "Review team requests, mark fulfilled orders, or issue refunds." if is_admin else "Track the items your team has requested." }}</p></div>
+  {% if is_admin %}<div class="heading-actions"><a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.catalog') }}">Storefront</a></div>{% else %}<a class="button button-secondary" href="{{ url_for('store.catalog') }}">Back to store</a>{% endif %}
+</section>
+<div class="table-wrap"><table><thead><tr><th>Order</th>{% if is_admin %}<th>Team</th>{% endif %}<th>Item</th><th>Answers</th><th>Date</th><th>Status</th><th class="number">Total</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr></thead><tbody>
+  {% for order in orders %}
+    <tr>
+      <td>#{{ order.id }} <small class="table-subtext">Qty {{ order.quantity }}</small></td>
+      {% if is_admin %}<td>{{ order.team.name }}</td>{% endif %}
+      <td>{{ order.product.name }}</td>
+      <td>{% for answer in order.answers %}<span class="answer-line"><strong>{{ answer.question.text }}:</strong> {{ answer.answer }}</span>{% else %}—{% endfor %}</td>
+      <td>{{ order.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td><span class="pill pill-{{ order.status }}">{{ order.status }}</span></td><td class="number">{{ "%.2f"|format(order.total) }} cr</td>
+      {% if is_admin %}<td><div class="action-stack">
+        {% if order.status == 'pending' %}<form method="post" action="{{ url_for('store.complete_order', order_id=order.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small">Complete</button></form>{% endif %}
+        {% if order.status != 'refunded' %}<form method="post" action="{{ url_for('store.refund_order', order_id=order.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small">Refund</button></form>{% endif %}
+      </div></td>{% endif %}
+    </tr>
+  {% else %}<tr><td colspan="{{ 8 if is_admin else 6 }}" class="table-empty">No orders to show.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

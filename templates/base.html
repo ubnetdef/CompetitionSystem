@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Competition System{% endblock %}</title>
+  {% block head %}{% endblock %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <header class="topbar">
+    <a class="brand" href="{{ site_links.engine }}">COMPETITION<span> SYSTEM</span></a>
+    <nav aria-label="Main navigation">
+      {% if not current_user.is_authenticated or current_user.role != 'banker' %}
+        <a href="{{ site_links.engine }}/scoreboard">Scoreboard</a>
+      {% endif %}
+      <a href="{{ site_links.bank }}/bank">Bank</a>
+      {% if not current_user.is_authenticated or current_user.role != 'banker' %}
+        <a href="{{ site_links.store }}/store">Store</a>
+      {% endif %}
+      {% if current_user.is_authenticated and current_user.role in ['team', 'admin', 'organizer'] %}
+        <a href="{{ url_for('main.team_checks') }}">{{ 'My checks' if current_user.role == 'team' else 'Team checks' }}</a>
+      {% endif %}
+      {% if current_user.is_authenticated and current_user.role in ['admin', 'organizer'] %}
+        <a href="{{ site_links.admin }}/admin">Admin</a>
+      {% endif %}
+    </nav>
+    <div class="topbar-account">
+      {% if current_user.is_authenticated %}
+        <span class="account-name">{{ current_user.username }}</span>
+        <form method="post" action="{{ url_for('auth.logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="button button-quiet" type="submit">Sign out</button>
+        </form>
+      {% else %}
+        <a class="button button-primary button-small" href="{{ url_for('auth.login') }}">Sign in</a>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="page-shell">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="flash-stack" aria-live="polite">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <span>Competition System</span>
+    <span>Scoring · Banking · Store</span>
+  </footer>
+</body>
+</html>

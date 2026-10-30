@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Store · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">COMPETITION MARKETPLACE</p><h1>Team store</h1><p>Use competition credits to request items and track order fulfillment.</p></div>
+  <div class="heading-actions">
+    {% if current_user.is_authenticated and current_user.role == 'team' %}<a class="button button-secondary" href="{{ url_for('store.orders') }}">My orders</a><a class="balance-chip" href="{{ site_links.bank }}/bank">Balance {{ "%.2f"|format(balance) }} cr</a>
+    {% elif current_user.is_authenticated and current_user.role in ['admin', 'organizer'] %}<a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.manage_orders') }}">Manage orders</a>
+    {% elif not current_user.is_authenticated %}<a class="button button-primary" href="{{ url_for('auth.login') }}">Sign in to purchase</a>{% endif %}
+  </div>
+</section>
+{% if products %}
+  <div class="store-grid">
+    {% for product in products %}
+      <article class="product-card">
+        <div class="product-visual"><span>ITEM {{ "%02d"|format(loop.index) }}</span><div class="product-symbol">✦</div></div>
+        <div class="product-body">
+          <div class="card-heading"><h2>{{ product.name }}</h2><span class="price">{{ "%.2f"|format(product.price) }} cr</span></div>
+          <p>{{ product.description or "A competition item available to registered teams." }}</p>
+          <div class="product-meta">
+            <span>{{ "Unlimited stock" if product.stock_count is none else product.stock_count ~ " in stock" }}</span>
+            {% if product.max_per_team %}<span>Limit {{ product.max_per_team }} per team</span>{% endif %}
+            {% if product.available_until %}<span>Until {{ product.available_until.strftime("%b %d, %H:%M UTC") }}</span>{% endif %}
+          </div>
+          {% if current_user.is_authenticated and current_user.role == 'team' %}
+            <form method="post" action="{{ url_for('store.purchase', product_id=product.id) }}" class="purchase-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% for question in product.questions %}<label for="question_{{ question.id }}">{{ question.text }}</label><input id="question_{{ question.id }}" name="question_{{ question.id }}" maxlength="500" required>{% endfor %}
+              <div class="purchase-actions">
+                {% if product.stock_count is none or product.stock_count > 0 %}<input aria-label="Quantity" name="quantity" type="number" min="1" max="50" value="1">
+                  <button class="button button-primary" type="submit">Place order</button>
+                {% else %}<button class="button button-secondary" type="button" disabled>Sold out</button>{% endif %}
+              </div>
+            </form>
+          {% elif not current_user.is_authenticated %}
+            <a class="button button-primary button-full" href="{{ url_for('auth.login') }}">Sign in to order</a>
+          {% else %}
+            <p class="small-muted">Purchases are available to team accounts.</p>
+          {% endif %}
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state panel"><h2>The store is getting ready</h2><p>No items are published yet. Check back later or ask an organizer.</p></div>
+{% endif %}
+{% endblock %}

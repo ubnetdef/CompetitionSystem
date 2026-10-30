@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Accounts and teams</h1><p>Create accounts for teams and staff. Users do not self-register.</p></div>
+  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a>
+</section>
+<section class="split-layout">
+  <form class="panel form-panel" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2>Create account</h2>
+    <label for="username">Username</label><input id="username" name="username" maxlength="80" required>
+    <label for="password">Initial password</label><input id="password" name="password" type="password" minlength="12" required><small>At least 12 characters. Share it securely and have the team change it with an organizer's help.</small>
+    <label for="role">Role</label>
+    <select id="role" name="role" required>
+      <option value="team">Team account</option><option value="banker">Bank operator</option>
+      {% if is_admin %}<option value="organizer">Competition organizer</option><option value="admin">Administrator</option>{% endif %}
+    </select>
+    <label for="team_id">Existing team <span class="optional">(optional)</span></label>
+    <select id="team_id" name="team_id"><option value="">Create a new team instead</option>{% for team in unassigned_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
+    <label for="team_name">New team name <span class="optional">(if no existing team is selected)</span></label><input id="team_name" name="team_name" maxlength="120">
+    <button class="button button-primary" type="submit">Create account</button>
+  </form>
+  <div class="panel info-panel"><p class="eyebrow">ROLE GUIDE</p><h2>Shared access</h2>
+    <ul class="clean-list">
+      <li><strong>Team</strong><span>One shared login per team for the scoreboard, bank account, and store.</span></li>
+      <li><strong>Bank operator</strong><span>View transaction activity and adjust simulated team credits.</span></li>
+      <li><strong>Organizer</strong><span>Manage competitions, team accounts, and store fulfillment.</span></li>
+      <li><strong>Admin</strong><span>Full access, including staff account management.</span></li>
+    </ul>
+  </div>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">ACCOUNT DIRECTORY</p><h2>{{ users|length }} accounts</h2></div></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Username</th><th>Role</th><th>Team</th><th>Status</th><th>Reset password</th><th></th></tr></thead>
+    <tbody>{% for user in users %}
+      <tr>
+        <td><strong>{{ user.username }}</strong></td><td>{{ user.role|title }}</td><td>{{ user.team.name if user.team else "—" }}</td>
+        <td><span class="pill pill-{{ 'active' if user.is_active else 'paused' }}">{{ "Active" if user.is_active else "Disabled" }}</span></td>
+        <td><form class="inline-form" method="post" action="{{ url_for('admin.reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="password" type="password" minlength="12" placeholder="New password" required><button class="button button-secondary button-small">Reset</button></form></td>
+        <td><form method="post" action="{{ url_for('admin.toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small" {% if user.id == current_user.id %}disabled{% endif %}>{{ "Disable" if user.is_active else "Enable" }}</button></form></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="table-empty">No accounts have been created.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

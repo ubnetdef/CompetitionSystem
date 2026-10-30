@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Management Controls · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">PLATFORM SETTINGS</p><h1>Management controls</h1><p>Choose which public scoreboard actions are available.</p></div>
+  <div class="heading-actions"><a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a></div>
+</section>
+<form class="panel form-panel management-controls-form" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <h2>Scoreboard</h2>
+  <p class="muted">The competition selector is hidden by default. Enable it when viewers should be able to switch between active competitions.</p>
+  <label class="checkbox-label">
+    <input type="checkbox" name="scoreboard_competition_selector_enabled" {% if scoreboard_competition_selector_enabled %}checked{% endif %}>
+    Show the active competition selector on the public scoreboard
+  </label>
+  <div class="builder-actions"><button class="button button-primary" type="submit">Save controls</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Team bank · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row"><div><p class="eyebrow">TEAM BANK</p><h1>{{ team.name }}</h1><p>Your shared competition credit account.</p></div><div class="balance-card"><span>Available balance</span><strong>{{ "%.2f"|format(balance) }} <small>cr</small></strong></div></section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">ACCOUNT ACTIVITY</p><h2>Recent transactions</h2></div><a href="{{ site_links.store }}/store">Spend credits in the store →</a></div>
+  <div class="table-wrap"><table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="number">Amount</th></tr></thead><tbody>
+    {% for transaction in transactions %}<tr><td>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td>{{ transaction.description }}</td><td><span class="pill pill-{{ transaction.kind }}">{{ transaction.kind }}</span></td><td class="number {{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ "%.2f"|format(transaction.amount) }}</td></tr>
+    {% else %}<tr><td colspan="4" class="table-empty">No transactions yet. Competition points and organizer adjustments appear here.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

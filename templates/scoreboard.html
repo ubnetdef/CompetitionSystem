@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Scoreboard · Competition System{% endblock %}
+{% block body_class %}scoreboard-page{% endblock %}
+{% block content %}
+<header class="scoreboard-heading">
+  <h1>{{ selected.name if selected else "Scoreboard" }}</h1>
+</header>
+{% if competitions %}
+  {% if show_competition_selector %}
+    <form class="scoreboard-selector" method="get">
+      <label for="competition">Competition</label>
+      <select id="competition" name="competition" onchange="this.form.submit()">
+        {% for competition in competitions %}
+          <option value="{{ competition.id }}" {% if selected and selected.id == competition.id %}selected{% endif %}>{{ competition.name }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button class="button button-secondary button-small" type="submit">Show</button></noscript>
+    </form>
+  {% endif %}
+  {% if selected %}
+    <span class="visually-hidden" data-live-round>Round {{ selected.round_number }}</span>
+    <span class="visually-hidden" data-live-status role="status" aria-live="polite">Connecting to live updates…</span>
+    <div class="scoreboard-table-wrap" data-live-board data-live-url="{{ url_for('main.scoreboard_live', competition_id=selected.id) }}" data-poll-ms="5000">
+      <table class="scoreboard-table">
+        <thead><tr><th class="sticky-team">Rank · Team</th>
+          {% for service in services %}
+            <th class="score-check-heading" data-service-id="{{ service.id }}">
+              <span>{{ service.host_group.name if service.host_group else "General" }}</span>
+              <small>{{ service.check_type|upper }}</small>
+            </th>
+          {% endfor %}
+          <th class="number score-total-heading">Points</th>
+        </tr></thead>
+        <tbody>
+          {% for row in rows %}
+            <tr data-team-id="{{ row.team.id }}">
+              <td class="sticky-team team-board-cell"><span class="rank-cell" data-team-rank>{{ "%02d"|format(loop.index) }}</span><strong data-team-name>{{ row.team.name }}</strong></td>
+              {% for service in services %}
+                {% set result = latest_results.get((row.team.id, service.id)) %}
+                {% if service.paused %}
+                  {% set cell_status = "paused" %}
+                  {% set cell_label = "Scoring is paused" %}
+                {% elif not service.enabled %}
+                  {% set cell_status = "unknown" %}
+                  {% set cell_label = "Check is disabled" %}
+                {% elif result %}
+                  {% set cell_status = "pass" if result.passed else "fail" %}
+                  {% set cell_label = "Latest check passed" if result.passed else "Latest check failed" %}
+                {% else %}
+                  {% set cell_status = "unknown" %}
+                  {% set cell_label = "No completed result yet" %}
+                {% endif %}
+                <td class="score-result-cell" data-result-status="{{ cell_status }}" data-team-id="{{ row.team.id }}" data-service-id="{{ service.id }}" aria-label="{{ cell_label }}" title="{{ cell_label }}"><span class="visually-hidden">{{ cell_status }}</span></td>
+              {% endfor %}
+              <td class="number score-number score-total" data-team-score>{{ row.score }}</td>
+            </tr>
+          {% else %}<tr><td colspan="{{ services|length + 2 }}" class="table-empty">No teams have been enrolled.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not services %}<p class="scoreboard-empty-note">No visible score checks are configured yet.</p>{% endif %}
+    <script src="{{ url_for('static', filename='scoreboard-live.js') }}" defer></script>
+  {% endif %}
+{% else %}
+  <div class="empty-state panel scoreboard-no-competition"><h2>No active competitions</h2><p>There are no competitions running right now.</p></div>
+{% endif %}
+{% endblock %}

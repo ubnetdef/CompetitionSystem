@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Admin · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">PLATFORM CONTROL</p><h1>Admin overview</h1><p>Manage competition setup, team access, and store operations.</p></div>
+  <div class="heading-actions"><a class="button button-primary" href="{{ url_for('admin.competitions') }}">Create scoreboard</a></div>
+</section>
+<section class="section-block management-controls-link">
+  <div class="section-heading">
+    <div><p class="eyebrow">PLATFORM SETTINGS</p><h2>Management controls</h2></div>
+    <a class="button button-secondary" href="{{ url_for('admin.management_controls') }}">Open controls</a>
+  </div>
+  <p class="muted">Configure platform-wide scoreboard options and other organizer controls.</p>
+</section>
+<section class="stat-grid">
+  <article class="stat-card"><span>Accounts</span><strong>{{ user_count }}</strong><small>Admin-created access</small></article>
+  <article class="stat-card"><span>Teams</span><strong>{{ team_count }}</strong><small>Team accounts</small></article>
+  <article class="stat-card"><span>Competitions</span><strong>{{ competitions|length }}</strong><small>Across all statuses</small></article>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">OPERATIONS</p><h2>Competition setup</h2></div><a href="{{ url_for('admin.users') }}">Manage accounts →</a></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Competition</th><th>Status</th><th>Teams</th><th>Scoring</th><th></th></tr></thead>
+      <tbody>
+        {% for competition in competitions %}
+          <tr>
+            <td><strong>{{ competition.name }}</strong><small class="table-subtext">{{ competition.interval_seconds }} sec rounds</small></td>
+            <td><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span></td>
+            <td>{{ competition.teams|length }}</td>
+            <td>{{ competition.services|length }} checks</td>
+            <td><a class="table-action" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Manage →</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="table-empty">No competitions created yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">SCORING HEALTH</p><h2>Recent rounds</h2></div></div>
+  <div class="table-wrap">
+    <table><thead><tr><th>Competition</th><th>Round</th><th>Status</th><th>Details</th></tr></thead>
+      <tbody>{% for round in recent_rounds %}
+        <tr><td>{{ round.competition.name }}</td><td>#{{ round.number }}</td><td><span class="pill pill-{{ round.status }}">{{ round.status }}</span></td><td>{{ round.error_message or (round.completed_at.strftime("%Y-%m-%d %H:%M UTC") if round.completed_at else "In progress") }}</td></tr>
+      {% else %}<tr><td colspan="4" class="table-empty">No scoring rounds have run yet.</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Competition System{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">ONE PLATFORM · EVERY COMPETITION</p>
+    <h1>Everything your competition needs, in one place.</h1>
+    <p class="hero-lede">Manage scoring, team credits, and competition items from a connected system with one account for each team.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="{{ url_for('auth.login') }}">Sign in to your team</a>
+      <a class="button button-secondary" href="{{ url_for('main.scoreboard') }}">View scoreboard</a>
+    </div>
+    <p class="small-muted">Team accounts are created by a competition organizer.</p>
+  </div>
+  <div class="hero-graphic" aria-hidden="true">
+    <div class="orb orb-one"></div><div class="orb orb-two"></div>
+    <div class="graphic-card">
+      <div class="graphic-line"><span class="status-dot"></span> SCORING ONLINE</div>
+      <div class="graphic-score">+240 <small>points</small></div>
+      <div class="mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="graphic-caption">LIVE COMPETITION ACTIVITY</div>
+    </div>
+  </div>
+</section>
+
+<section class="feature-grid">
+  <article class="feature-card"><span class="feature-index">01</span><h2>Engine</h2><p>Configure competitions, teams, service checks, and automated scoring rounds.</p><a href="{{ site_links.engine }}/scoreboard">Explore scoring →</a></article>
+  <article class="feature-card"><span class="feature-index">02</span><h2>Bank</h2><p>Track team credits through a transparent transaction ledger connected to scoring.</p><a href="{{ site_links.bank }}/bank">Open the bank →</a></article>
+  <article class="feature-card"><span class="feature-index">03</span><h2>Store</h2><p>Publish competition items, collect team orders, and manage fulfillment in one place.</p><a href="{{ site_links.store }}/store">Browse the store →</a></article>
+</section>
+
+{% if competitions %}
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">HAPPENING NOW</p><h2>Active competitions</h2></div></div>
+  <div class="card-grid">
+    {% for competition in competitions %}
+      <article class="data-card">
+        <div class="card-heading"><h3>{{ competition.name }}</h3><span class="pill pill-active">Active</span></div>
+        <p>{{ competition.description or "Follow the live scoreboard and scoring rounds." }}</p>
+        <a href="{{ url_for('main.scoreboard', competition=competition.id) }}">View standings →</a>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if products %}
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">TEAM STORE</p><h2>Featured items</h2></div><a href="{{ site_links.store }}/store">View all items →</a></div>
+  <div class="card-grid">
+    {% for product in products %}
+      <article class="data-card">
+        <div class="card-heading"><h3>{{ product.name }}</h3><span class="price">{{ "%.2f"|format(product.price) }} cr</span></div>
+        <p>{{ product.description or "Available to registered team accounts." }}</p>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

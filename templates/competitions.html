@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Competitions · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">SCORING ENGINE</p><h1>Scoreboards</h1><p>Create and manage scoreboards with guided setup for IP templates, device groups, team hosts, and score checks.</p></div>
+  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a>
+</section>
+<section class="split-layout">
+  <div class="builder-tabs builder-tabs-start" aria-label="Scoreboard setup steps">
+    <span class="builder-tab is-active" aria-current="step"><span class="builder-tab-index">01</span><span>Scoreboard</span></span>
+    <span class="builder-tab is-locked"><span class="builder-tab-index">02</span><span>IP templates</span></span>
+    <span class="builder-tab is-locked"><span class="builder-tab-index">03</span><span>Device groups</span></span>
+    <span class="builder-tab is-locked"><span class="builder-tab-index">04</span><span>Teams and hosts</span></span>
+    <span class="builder-tab is-locked"><span class="builder-tab-index">05</span><span>Score checks</span></span>
+    <span class="builder-tab is-locked"><span class="builder-tab-index">06</span><span>Review and launch</span></span>
+  </div>
+  <form class="panel form-panel" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p class="eyebrow">STEP 1 · SCOREBOARD</p>
+    <h2>Create a scoreboard</h2>
+    <label for="name">Scoreboard name</label><input id="name" name="name" maxlength="120" required>
+    <label for="description">Description <span class="optional">(optional)</span></label><textarea id="description" name="description" rows="3" maxlength="2000"></textarea>
+    <div class="form-row">
+      <div><label for="interval_seconds">Round interval (seconds)</label><input id="interval_seconds" name="interval_seconds" type="number" min="15" max="3600" value="60" required></div>
+      <div><label for="payout_per_point">Credits per point</label><input id="payout_per_point" name="payout_per_point" type="number" min="0.01" step="0.01" value="{{ '%.2f'|format(config['DEFAULT_PAYOUT_PER_POINT']) }}" required></div>
+    </div>
+    <button class="button button-primary" type="submit">Create scoreboard and continue</button>
+  </form>
+  <div class="panel info-panel"><p class="eyebrow">GUIDED SETUP</p><h2>Build it in six steps</h2>
+    <ol class="clean-list ordered"><li><strong>Scoreboard details</strong><span>Name the scoreboard and choose timing and point payouts.</span></li><li><strong>IP templates</strong><span>Define IPv4 patterns and index ranges.</span></li><li><strong>Device groups</strong><span>Name host categories and assign template IDs.</span></li><li><strong>Teams and hosts</strong><span>Generate and adjust addresses in a quick-create grid.</span></li><li><strong>Score checks</strong><span>Assign each check to a device group.</span></li><li><strong>Review and launch</strong><span>Verify each step before activating scoring.</span></li></ol>
+  </div>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">ALL EVENTS</p><h2>Scoreboard list</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Name</th><th>Status</th><th>Teams</th><th>Checks</th><th>Rounds</th><th>Manage</th></tr></thead><tbody>
+    {% for competition in competitions %}
+      <tr><td><strong>{{ competition.name }}</strong></td><td><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span></td><td>{{ competition.teams|length }}</td><td>{{ competition.services|length }}</td><td>{{ competition.round_number }}</td><td class="builder-row-actions"><a class="table-action" href="{{ url_for('admin.competition_builder', competition_id=competition.id) }}">Open builder</a><a class="table-action" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Advanced settings</a></td></tr>
+    {% else %}<tr><td colspan="6" class="table-empty">No scoreboards yet. Create one to begin.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

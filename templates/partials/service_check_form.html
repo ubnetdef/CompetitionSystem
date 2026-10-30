@@ -1,0 +1,189 @@
+{% set form_config = (editing_service.check_config or {}) if editing_service else {} %}
+{% set form_id = form_id|default('service-form') %}
+{% set form_markup %}
+<form class="panel form-panel" method="post" id="FORM_ROOT"
+      data-builder-mode="{{ 'true' if request.endpoint == 'admin.competition_builder' else 'false' }}"
+      data-dns-preview-url="{{ url_for('admin.dns_expected_answer') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="{{ 'update-service' if editing_service else 'add-service' }}">
+  {% if request.args.get('return_to') == 'builder' %}<input type="hidden" name="return_to_builder" value="1">{% endif %}
+  {% if request.endpoint == 'admin.competition_builder' %}<input type="hidden" name="builder_mode" value="1">{% endif %}
+  <input type="hidden" name="step" value="checks">
+  {% if editing_service %}<input type="hidden" name="service_id" value="{{ editing_service.id }}">{% endif %}
+  <p class="eyebrow">SCORING CONFIGURATION</p>
+  <h2>{% if editing_service %}Edit score check{% elif required_template %}Configure {{ check_catalog.get(required_check_type, {}).get("label", required_check_type|upper) }} for {{ required_group.name }}{% else %}Add score check{% endif %}</h2>
+  <label for="service_name">Service name</label><input id="service_name" name="service_name" maxlength="120" value="{{ editing_service.name if editing_service else (required_group.name ~ ' ' ~ check_catalog.get(required_check_type, {}).get('label', required_check_type|upper) if required_template else '') }}" required>
+  {% if required_template %}
+    <input type="hidden" name="host_group_id" value="{{ required_group.id }}">
+    <input type="hidden" name="check_type" value="{{ required_check_type }}">
+    <p><strong>Device group:</strong> {{ required_group.name }} · <strong>Check type:</strong> {{ check_catalog.get(required_check_type, {}).get("label", required_check_type|upper) }}</p>
+  {% else %}
+  <label for="host_group_id">Device group template</label>
+  <select id="host_group_id" name="host_group_id">
+    <option value="">Select a device group</option>
+    {% for group in host_groups %}
+      <option value="{{ group.id }}"
+              data-check-types="{{ group.check_types|tojson }}"
+              {% if editing_service and editing_service.host_group_id == group.id %}selected{% elif not editing_service and selected_host_group and selected_host_group.id == group.id %}selected{% endif %}>
+        {{ group.name }} · {{ group.ip_template.name if group.ip_template else "IP template needed" }}
+      </option>
+    {% endfor %}
+  </select>
+  {% if request.endpoint == 'admin.competition_builder' %}
+    <p class="muted">Configure this check once for the device group; it applies to every team's matching host in that group.</p>
+  {% endif %}
+  <label for="check_type">Check type</label>
+  {% if editing_service %}
+    <select id="check_type" disabled>
+      <option value="{{ editing_service.check_type }}" selected>{{ check_catalog.get(editing_service.check_type, {}).get("label", editing_service.check_type|upper ~ " (legacy)") }}</option>
+    </select>
+    <input type="hidden" name="check_type" value="{{ editing_service.check_type }}">
+  {% else %}
+  <select id="check_type" name="check_type" required>
+    <option value="">Select a check type</option>
+    {% for key, definition in check_catalog.items() %}
+      {% if definition.available %}
+        <option value="{{ key }}" data-check-type="{{ key }}" data-supported="true"
+                {% if request.endpoint == 'admin.competition_builder' and selected_host_group and key not in (selected_host_group.check_types or []) %}disabled{% endif %}>
+          {{ definition.label }}
+        </option>
+      {% else %}
+        <option value="{{ key }}" data-check-type="{{ key }}" data-supported="false" disabled>{{ definition.label }} — not supported yet</option>
+      {% endif %}
+    {% endfor %}
+  </select>
+  {% endif %}
+  {% endif %}
+  {% if editing_service and editing_service.check_type == "tcp" %}
+  <div data-check-config="tcp">
+    <label for="tcp_port">TCP port</label><input id="tcp_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port }}">
+    <p class="muted">Legacy TCP connectivity check. New TCP checks are not offered.</p>
+  </div>
+  {% endif %}
+  <div data-check-config="http">
+    <div class="form-row">
+      <div><label for="scheme">Scheme</label><select id="scheme" name="scheme"><option value="http" {% if form_config.get('scheme', editing_service.protocol if editing_service else 'http') == 'http' %}selected{% endif %}>HTTP</option><option value="https" {% if form_config.get('scheme', editing_service.protocol if editing_service else 'http') == 'https' %}selected{% endif %}>HTTPS</option></select></div>
+      <div><label for="port">Port</label><input id="port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 80 }}"></div>
+    </div>
+    <label for="subdomain">Subdomain <span class="optional">(optional; hostname targets only)</span></label>
+    <input id="subdomain" name="subdomain" maxlength="253" placeholder="www" value="{{ form_config.get('subdomain', '') }}">
+    <label for="path">Path</label><input id="path" name="path" value="{{ editing_service.path if editing_service else '/' }}" maxlength="255">
+    <div class="form-row">
+      <div><label for="expected_status">Expected status</label><input id="expected_status" name="expected_status" type="number" min="100" max="599" value="{{ editing_service.expected_status if editing_service else 200 }}"></div>
+      <div><label for="expected_text">Expected response text <span class="optional">(optional)</span></label><input id="expected_text" name="expected_text" maxlength="255" value="{{ editing_service.expected_text or '' if editing_service else '' }}"></div>
+    </div>
+  </div>
+  <div data-check-config="ping" hidden>
+    <label for="attempts">Echo attempts</label>
+    <input id="attempts" name="attempts" type="number" min="1" max="4" value="{{ form_config.get('attempts', 1) }}">
+  </div>
+  <input type="hidden" data-saved-username value="{{ saved_username(editing_service) if editing_service else '' }}">
+  <div data-check-config="ssh" hidden>
+    <div class="form-row">
+      <div><label for="ssh_port">SSH port</label><input id="ssh_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 22 }}"></div>
+      <div><label for="ssh_username">Username</label><input id="ssh_username" name="username" maxlength="120"></div>
+    </div>
+    <label for="ssh_password">Password</label><input id="ssh_password" name="password" type="password" autocomplete="new-password">
+    <label for="host_key_fingerprint">Pinned SSH host-key fingerprint <span class="optional">(optional if verification is skipped below)</span></label>
+    <input id="host_key_fingerprint" name="host_key_fingerprint" maxlength="60" placeholder="SHA256:..." value="{{ form_config.get('host_key_fingerprint', '') }}" {% if form_config.get('host_key_verification') == 'skip' %}disabled{% endif %}>
+    <label class="checkbox-label"><input type="checkbox" name="skip_host_key_verification" {% if form_config.get('host_key_verification') == 'skip' %}checked{% endif %}> Skip SSH host-key verification</label>
+    <p class="muted">Skipping verification is less secure: a man-in-the-middle could impersonate the server and capture credentials. Pin a fingerprint when possible. The scorer never opens a shell or runs a command; credentials are encrypted at rest.</p>
+        {% with legacy_type='ssh' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+      </div>
+  <div data-check-config="winrm" hidden>
+    <div class="form-row">
+      <div><label for="winrm_port">WinRM HTTPS port</label><input id="winrm_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 5986 }}"></div>
+      <div><label for="auth_transport">Authentication</label><select id="auth_transport" name="auth_transport"><option value="ntlm" {% if form_config.get('auth_transport', 'ntlm') == 'ntlm' %}selected{% endif %}>NTLM</option><option value="basic" {% if form_config.get('auth_transport') == 'basic' %}selected{% endif %}>Basic (over HTTPS)</option></select></div>
+    </div>
+    <label for="winrm_username">Username</label><input id="winrm_username" name="username" maxlength="120">
+    <label for="winrm_password">Password</label><input id="winrm_password" name="password" type="password" autocomplete="new-password">
+    <p class="muted">Requires HTTPS with a trusted server certificate. Opens and immediately closes a temporary shell to verify authentication; no command is run.</p>
+        {% with legacy_type='winrm' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+      </div>
+  <div data-check-config="ldap" hidden>
+    <div class="form-row">
+      <div><label for="ldap_port">LDAPS port</label><input id="ldap_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 636 }}"></div>
+      <div><label for="ldap_username">Username / bind DN</label><input id="ldap_username" name="username" maxlength="120"></div>
+    </div>
+    <label for="ldap_password">Password</label><input id="ldap_password" name="password" type="password" autocomplete="new-password">
+    <label for="base_dn">Base DN</label><input id="base_dn" name="base_dn" maxlength="500" placeholder="dc=example,dc=org" value="{{ form_config.get('base_dn', '') }}">
+    <label for="search_filter">Search filter</label><input id="search_filter" name="search_filter" maxlength="500" placeholder="(objectClass=person)" value="{{ form_config.get('search_filter', '') }}">
+    <label for="attributes">Attributes <span class="optional">(comma separated)</span></label><input id="attributes" name="attributes" maxlength="500" placeholder="cn, mail" value="{{ form_config.get('attributes', [])|join(', ') }}">
+    <label for="ldap_expected_output">Expected value</label><input id="ldap_expected_output" name="expected_output" maxlength="500" value="{{ form_config.get('expected_output', '') }}">
+        {% with legacy_type='ldap' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+      </div>
+      <div data-check-config="sql" hidden>
+    <div class="form-row">
+      <div><label for="mysql_port">MySQL TLS port</label><input id="mysql_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 3306 }}"></div>
+      <div><label for="database_name">Database name</label><input id="database_name" name="database_name" maxlength="64" value="{{ form_config.get('database_name', '') }}"></div>
+    </div>
+    <label for="mysql_username">Username</label><input id="mysql_username" name="username" maxlength="120">
+    <label for="mysql_password">Password</label><input id="mysql_password" name="password" type="password" autocomplete="new-password">
+    <p class="muted">Runs a fixed <code>SELECT 1</code> health query over certificate-verified TLS. Custom SQL is not accepted.</p>
+        {% with legacy_type='sql' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+      </div>
+  <div data-check-config="ftp" hidden>
+    <div class="form-row">
+      <div><label for="ftps_port">Explicit FTPS port</label><input id="ftps_port" name="port" type="number" min="1" max="65535" value="{{ editing_service.port if editing_service else 21 }}"></div>
+      <div><label for="ftp_username">Username</label><input id="ftp_username" name="username" maxlength="120"></div>
+    </div>
+    <label for="ftp_password">Password</label><input id="ftp_password" name="password" type="password" autocomplete="new-password">
+    <label for="read_filename">Remote file to read</label><input id="read_filename" name="read_filename" maxlength="255" value="{{ form_config.get('read_filename', '') }}">
+    <label for="ftp_expected_output">Expected file text</label><input id="ftp_expected_output" name="expected_output" maxlength="500" value="{{ form_config.get('expected_output', '') }}">
+    <p class="muted">Uses verified TLS for login and data. Read-only; remote file writes are not supported.</p>
+        {% with legacy_type='ftp' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+      </div>
+  <div data-check-config="dns" hidden>
+    <label for="lookup">DNS name to look up</label><input id="lookup" name="lookup" maxlength="253" placeholder="service.example.net" value="{{ form_config.get('lookup', '') }}">
+    <div class="form-row">
+      <div><label for="record_type">Record type</label><select id="record_type" name="record_type">{% for record in ['A', 'AAAA', 'CNAME', 'MX', 'TXT'] %}<option {% if form_config.get('record_type', 'A') == record %}selected{% endif %}>{{ record }}</option>{% endfor %}</select></div>
+      <div>
+        <label for="expected_output">Expected answer <span class="optional">(auto-filled from current DNS)</span></label>
+        <input id="expected_output" name="expected_output" maxlength="500" value="{{ form_config.get('expected_output', '') }}">
+        <small class="muted" id="dns-expected-status" aria-live="polite">Enter a DNS name to load its current answer, or enter a value manually.</small>
+      </div>
+    </div>
+    {% with legacy_type='dns' %}{% include 'partials/legacy_fields.html' %}{% endwith %}
+  </div>
+  {% set selected_team_check_type = required_check_type if required_template else (editing_service.check_type if editing_service else '') %}
+  <fieldset class="team-field-access" data-team-access {% if selected_team_check_type and selected_team_check_type not in team_credential_check_types %}hidden{% endif %}>
+    <legend>Team account access</legend>
+    <p class="muted">Unlock only the credential fields teams are allowed to change for their own hosts. Passwords are never displayed after saving.</p>
+    <label class="checkbox-label"><input type="checkbox" name="team_editable_fields" value="username" {% if editing_service and 'username' in (editing_service.team_editable_fields or []) %}checked{% endif %}> Unlock username for team updates</label>
+    <label class="checkbox-label"><input type="checkbox" name="team_editable_fields" value="password" {% if editing_service and 'password' in (editing_service.team_editable_fields or []) %}checked{% endif %}> Unlock password for team updates</label>
+  </fieldset>
+  <div class="form-row">
+    <div><label for="points">Points</label><input id="points" name="points" type="number" min="1" max="10000" value="{{ editing_service.points if editing_service else 1 }}" required></div>
+    <div><label for="points_boost">Points Boost <span class="optional">(added on pass)</span></label><input id="points_boost" name="points_boost" type="number" min="0" max="10000" value="{{ editing_service.points_boost if editing_service else 0 }}" required></div>
+    <div><label for="timeout_seconds">Timeout (seconds)</label><input id="timeout_seconds" name="timeout_seconds" type="number" min="1" max="30" value="{{ editing_service.timeout_seconds if editing_service else 3 }}" required></div>
+  </div>
+  <label for="service_group_id">Service group <span class="optional">(optional)</span></label>
+  <select id="service_group_id" name="service_group_id">
+    <option value="">No group</option>
+    {% for group in service_groups %}
+      <option value="{{ group.id }}" {% if editing_service and editing_service.service_group_id == group.id %}selected{% endif %}>{{ group.display_name }}</option>
+    {% endfor %}
+  </select>
+  <input type="hidden" name="enabled" value="off">
+  <label class="checkbox-label"><input type="checkbox" name="enabled" value="on" {% if not editing_service or editing_service.enabled %}checked{% endif %}> Enable this score check</label>
+  <label class="checkbox-label"><input type="checkbox" name="paused" {% if editing_service and editing_service.paused %}checked{% endif %}> Pause scoring for this service (skip its checks and points)</label>
+  <label class="checkbox-label"><input type="checkbox" name="hidden_from_scoreboard" {% if editing_service and editing_service.hidden_from_scoreboard %}checked{% endif %}> Hide from per-service scoreboard details (currently team totals only; points still count)</label>
+  <div class="builder-actions">
+    <button class="button button-primary" type="submit">{{ "Save check" if editing_service else "Add check" }}</button>
+    {% if editing_service %}
+      {% if request.endpoint == 'admin.competition_builder' %}
+        <a class="button button-secondary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks') }}">Cancel</a>
+      {% else %}
+        <a class="button button-secondary" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Cancel</a>
+      {% endif %}
+    {% endif %}
+  </div>
+  <p class="form-footnote">Credential-backed checks encrypt usernames and passwords at rest using a dedicated credential key. {% if editing_service %}Username is shown for reference; leave the password blank to keep it, or enter a new password and/or username to change them.{% else %}Back up that key securely.{% endif %} The scorer never runs remote commands or writes remote files.</p>
+</form>
+{% endset %}
+{{ form_markup
+  |replace('id="', ('id="' ~ form_id ~ '-')|safe)
+  |replace('for="', ('for="' ~ form_id ~ '-')|safe)
+  |replace(('id="' ~ form_id ~ '-FORM_ROOT"'), ('id="' ~ form_id ~ '"')|safe)
+  |safe
+}}

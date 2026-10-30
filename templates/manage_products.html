@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Store items · Competition System{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row"><div><p class="eyebrow">STORE ADMINISTRATION</p><h1>Items and availability</h1><p>Set prices in simulated credits, inventory limits, and optional order questions.</p></div><div class="heading-actions"><a class="button button-secondary" href="{{ url_for('store.manage_orders') }}">Manage orders</a><a class="button button-secondary" href="{{ url_for('store.catalog') }}">View store</a></div></section>
+<section class="split-layout">
+  <form class="panel form-panel" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2>Create item</h2>
+    <label for="name">Item name</label><input id="name" name="name" maxlength="120" required>
+    <label for="description">Description</label><textarea id="description" name="description" rows="3" maxlength="2000"></textarea>
+    <div class="form-row"><div><label for="price">Price (credits)</label><input id="price" name="price" type="number" min="0.01" max="1000000" step="0.01" required></div><div><label for="stock_count">Stock <span class="optional">(blank = unlimited)</span></label><input id="stock_count" name="stock_count" type="number" min="0"></div></div>
+    <div class="form-row"><div><label for="max_per_team">Team purchase limit <span class="optional">(optional)</span></label><input id="max_per_team" name="max_per_team" type="number" min="1"></div><div><label for="available_until">Available until <span class="optional">(optional, UTC)</span></label><input id="available_until" name="available_until" type="datetime-local"></div></div>
+    <label for="questions">Order questions <span class="optional">(one per line, up to 10)</span></label><textarea id="questions" name="questions" rows="4" placeholder="Preferred size&#10;Delivery notes"></textarea>
+    <label class="checkbox-label"><input type="checkbox" name="published"> Publish immediately</label>
+    <button class="button button-primary" type="submit">Create item</button>
+  </form>
+  <div class="panel info-panel"><p class="eyebrow">STORE SAFETY</p><h2>Credits stay in-system</h2><p>Purchases atomically debit the team's ledger and reserve available stock. Orders remain pending until an organizer completes or refunds them.</p><p>Credits are simulated and should not be treated as cash.</p></div>
+</section>
+<section class="section-block"><div class="section-heading"><div><p class="eyebrow">CATALOG ADMIN</p><h2>{{ products|length }} items</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Item</th><th>Price</th><th>Stock</th><th>Visibility</th><th>Availability</th><th></th></tr></thead><tbody>
+    {% for product in products %}<tr><td><strong>{{ product.name }}</strong><small class="table-subtext">{{ product.description|truncate(90) }}</small></td><td>{{ "%.2f"|format(product.price) }} cr</td><td>{{ product.stock_count if product.stock_count is not none else "Unlimited" }}</td><td><span class="pill pill-{{ 'active' if product.published else 'paused' }}">{{ "Published" if product.published else "Hidden" }}</span></td><td>{{ product.available_until.strftime("%Y-%m-%d %H:%M UTC") if product.available_until else "Always" }}</td><td><form method="post" action="{{ url_for('store.toggle_product', product_id=product.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small">{{ "Hide" if product.published else "Publish" }}</button></form></td></tr>
+    {% else %}<tr><td colspan="6" class="table-empty">No items created yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

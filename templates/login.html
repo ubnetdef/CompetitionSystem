@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Competition System{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-aside">
+    <p class="eyebrow">ONE ACCOUNT · ALL SITES</p>
+    <h1>Welcome back.</h1>
+    <p>Sign in with the account created for you by your competition administrator or organizer.</p>
+  </div>
+  <form class="panel auth-panel" method="post" action="{{ url_for('auth.login') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2>Sign in</h2>
+    <p class="muted">Use your team or staff account.</p>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" maxlength="80" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="button button-primary button-full" type="submit">Continue</button>
+    <p class="form-footnote">Need help? Contact your competition organizer to reset your password.</p>
+  </form>
+</section>
+{% endblock %}

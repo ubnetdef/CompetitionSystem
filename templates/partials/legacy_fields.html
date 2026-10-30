@@ -1,0 +1,38 @@
+{# Opt-in legacy compatibility fields. Expects legacy_type and form_config in scope. #}
+<details class="legacy-box" {% if form_config.get('legacy') or form_config.get('query_host') %}open{% endif %}>
+  <summary>Legacy compatibility <span class="optional">(opt-in, less secure)</span></summary>
+  <label class="checkbox-label"><input type="checkbox" name="legacy_mode" {% if form_config.get('legacy') or form_config.get('query_host') %}checked{% endif %}>
+    {% if legacy_type == "ssh" %}Run a command after login and compare its output
+    {% elif legacy_type == "winrm" %}Allow plain HTTP and run a command, comparing its output
+    {% elif legacy_type == "ldap" %}Allow plain (non-TLS) LDAP bound as user@domain
+    {% elif legacy_type == "sql" %}Allow non-TLS MySQL and a row-count SELECT query
+    {% elif legacy_type == "ftp" %}Allow plain (non-TLS) FTP and write a file before reading it
+    {% elif legacy_type == "dns" %}Ask the checked host as the DNS server; <code>{address}</code> in the expected answer means that host's IP
+    {% endif %}
+  </label>
+  {% if legacy_type in ("ssh", "winrm") %}
+    {% if legacy_type == "winrm" %}
+    <label>Endpoint scheme<select name="legacy_scheme"><option value="http" {% if form_config.get('scheme', 'http') == 'http' %}selected{% endif %}>HTTP</option><option value="https" {% if form_config.get('scheme') == 'https' %}selected{% endif %}>HTTPS</option></select></label>
+    {% endif %}
+    <div class="form-row">
+      <div><label>Command<input name="legacy_command" maxlength="200" placeholder="whoami" value="{{ form_config.get('command', '') }}"></label></div>
+      <div><label>Expected output contains<input name="legacy_expected_output" maxlength="500" value="{{ form_config.get('expected_output', '') if form_config.get('command') else '' }}"></label></div>
+    </div>
+  {% elif legacy_type == "ldap" %}
+    <label>Domain<input name="legacy_domain" maxlength="253" placeholder="example.local" value="{{ form_config.get('domain', '') }}"></label>
+    <p class="muted">Leave Base DN blank to derive it from the domain; the expected value is optional (any returned entry passes).</p>
+  {% elif legacy_type == "sql" %}
+    <label>SELECT query<input name="legacy_sql_command" maxlength="500" placeholder="SELECT * FROM users" value="{{ form_config.get('command', '') }}"></label>
+    <div class="form-row">
+      <div><label>Minimum rows<input name="legacy_min_rows" type="number" min="0" max="10000" value="{{ form_config.get('min_rows', '') }}"></label></div>
+      <div><label>Maximum rows<input name="legacy_max_rows" type="number" min="0" max="10000" value="{{ form_config.get('max_rows', '') }}"></label></div>
+    </div>
+    <p class="muted">The session is set read-only before the query runs.</p>
+  {% elif legacy_type == "ftp" %}
+    <div class="form-row">
+      <div><label>Remote file to write <span class="optional">(optional)</span><input name="legacy_write_filename" maxlength="255" value="{{ form_config.get('write_filename', '') }}"></label></div>
+      <div><label>Text to write<input name="legacy_write_text" maxlength="500" value="{{ form_config.get('write_text', '') }}"></label></div>
+    </div>
+  {% endif %}
+  <p class="muted">Legacy mode sends credentials or data without TLS and may run configured commands on the target. Use it only on trusted competition networks.</p>
+</details>

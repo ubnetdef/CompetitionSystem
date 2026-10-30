@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}Build {{ competition.name }} · Competition System{% endblock %}
+{% block content %}
+{% set step_labels = {
+  "details": "Scoreboard",
+  "groups": "Device groups",
+  "templates": "IP templates",
+  "teams": "Teams and hosts",
+  "checks": "Score checks",
+  "review": "Review and launch"
+} %}
+{% set step_index = steps.index(active_step) %}
+<section class="page-heading page-heading-row">
+  <div>
+    <p class="eyebrow">SCOREBOARD BUILDER</p>
+    <h1>{{ competition.name }}</h1>
+    <p>Set up the scoreboard in guided steps. A green check appears after each step is saved and valid.</p>
+  </div>
+  <div class="heading-actions">
+    <span class="pill pill-{{ competition.status }}">{{ competition.status }}</span>
+    <a class="button button-secondary" href="{{ url_for('admin.competition_detail', competition_id=competition.id) }}">Advanced settings</a>
+    <a class="button button-secondary" href="{{ url_for('admin.competitions') }}">All scoreboards</a>
+  </div>
+</section>
+
+<nav class="builder-tabs" aria-label="Scoreboard setup steps">
+  {% for step in steps %}
+    {% if loop.index0 <= max_step_index %}
+      <a class="builder-tab {% if step == active_step %}is-active{% endif %} {% if progress.get(step, false) %}is-complete{% endif %}"
+         href="{{ url_for('admin.competition_builder', competition_id=competition.id, step=step) }}"
+         {% if step == active_step %}aria-current="step"{% endif %}>
+        <span class="builder-tab-index">
+          {% if progress.get(step, false) %}<span aria-label="Complete">✓</span>{% else %}{{ "%02d"|format(loop.index) }}{% endif %}
+        </span>
+        <span>{{ step_labels[step] }}</span>
+      </a>
+    {% else %}
+      <span class="builder-tab is-locked" aria-disabled="true">
+        <span class="builder-tab-index">{{ "%02d"|format(loop.index) }}</span>
+        <span>{{ step_labels[step] }}</span>
+      </span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+{% if active_step == "details" %}
+<section class="panel form-panel builder-panel">
+  <p class="eyebrow">STEP 1 · SCOREBOARD</p>
+  <h2>Scoreboard details</h2>
+  <p class="muted">Set the name, round timing, and how many credits teams earn per point.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="save-details">
+    <input type="hidden" name="step" value="details">
+    <label for="name">Scoreboard name</label>
+    <input id="name" name="name" maxlength="120" value="{{ competition.name }}" required>
+    <label for="description">Description <span class="optional">(optional)</span></label>
+    <textarea id="description" name="description" rows="3" maxlength="2000">{{ competition.description }}</textarea>
+    <div class="form-row">
+      <div>
+        <label for="interval_seconds">Scoring interval (seconds)</label>
+        <input id="interval_seconds" name="interval_seconds" type="number" min="15" max="3600" value="{{ competition.interval_seconds }}" required>
+      </div>
+      <div>
+        <label for="payout_per_point">Credits per point</label>
+        <input id="payout_per_point" name="payout_per_point" type="number" min="0.01" max="1000000" step="0.01" value="{{ '%.2f'|format(competition.payout_per_point) }}" required>
+      </div>
+    </div>
+    <div class="builder-actions">
+      <button class="button button-primary" type="submit">Save and continue to device groups</button>
+    </div>
+  </form>
+</section>
+
+{% elif active_step == "groups" %}
+<section class="panel form-panel builder-panel">
+  <p class="eyebrow">STEP 2 · DEVICE CATEGORIES</p>
+  <h2>{{ "Edit device group" if edit_host_group else "Create a device group" }}</h2>
+  <p class="muted">Create host categories first, then choose which scoring check types apply to each group. IP addressing is configured in the next step.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="save-host-group">
+    <input type="hidden" name="step" value="groups">
+    {% if edit_host_group %}<input type="hidden" name="host_group_id" value="{{ edit_host_group.id }}">{% endif %}
+    <label for="host_group_name">Device group name</label>
+    <input id="host_group_name" name="host_group_name" maxlength="120" value="{{ edit_host_group.name if edit_host_group else '' }}" placeholder="Ubuntu1" required>
+    <fieldset class="check-type-fieldset">
+      <legend>Check types for this device group</legend>
+      <p class="muted">Only supported types can be selected. SMB, IMAP, and CalDav are shown for reference but are not implemented yet.</p>
+      <div class="check-type-grid">
+        {% for key, definition in check_catalog.items() %}
+          <label class="checkbox-label">
+            <input type="checkbox" name="check_types" value="{{ key }}"
+                   {% if edit_host_group and key in (edit_host_group.check_types or []) %}checked{% endif %}
+                   {% if not definition.available %}disabled{% endif %}>
+            {{ definition.label }}{% if not definition.available %} (not supported yet){% endif %}
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="builder-actions">
+      {% if edit_host_group %}<a class="button button-secondary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='groups') }}">Cancel edit</a>{% endif %}
+      <button class="button button-primary" type="submit">{{ "Save device group" if edit_host_group else "Add device group" }}</button>
+    </div>
+  </form>
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">DEVICE GROUPS</p><h2>{{ host_groups|length }} configured</h2></div></div>
+  <div class="card-grid">
+    {% for group in host_groups %}
+      <article class="panel">
+        <div class="card-heading"><h3>{{ group.name }}</h3><span class="pill">{{ group.hosts|length }} hosts</span></div>
+        <p><strong>Check types:</strong> {{ group.check_types|map('upper')|join(', ') }}</p>
+        <p class="muted">{{ "IP template configured" if group.ip_template else "IP template needed in the next step" }}</p>
+        <div class="builder-actions">
+          <a class="button button-secondary button-small" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='groups', edit_host_group=group.id) }}">Edit</a>
+          <form method="post" onsubmit="return confirm('Delete this device group and its generated host addresses?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete-host-group"><input type="hidden" name="step" value="groups"><input type="hidden" name="host_group_id" value="{{ group.id }}">
+            <button class="button button-quiet button-small" type="submit">Delete</button>
+          </form>
+        </div>
+      </article>
+    {% else %}<p class="muted">Add at least one device group to continue.</p>{% endfor %}
+  </div>
+  <div class="builder-actions">
+    {% if progress.groups %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='templates') }}">Continue to IP templates</a>{% else %}<p class="muted">Add at least one device group and select its supported check types.</p>{% endif %}
+  </div>
+</section>
+
+{% elif active_step == "templates" %}
+<section class="panel builder-panel">
+  <p class="eyebrow">STEP 3 · IP ADDRESS TEMPLATES</p>
+  <h2>Set one address pattern per device group</h2>
+  <p class="muted">Configure each group's IPv4 pattern and ending octet. For example, a pattern of <code>10.1.{index}</code> with ending octet <code>20</code> generates addresses from <code>10.1.{index}.20</code>. Team indexes are assigned in ascending team-ID order.</p>
+</section>
+{% for group in host_groups %}
+  {% set pattern_parts = group.ip_template.address_template.rsplit('.', 1) if group.ip_template else ['10.1.{index}', '1'] %}
+  <section class="panel form-panel section-block">
+    <h3>{{ group.name }}</h3>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="save-group-template">
+      <input type="hidden" name="step" value="templates">
+      <input type="hidden" name="host_group_id" value="{{ group.id }}">
+      <div class="form-row">
+        <div>
+          <label for="address_prefix_{{ group.id }}">IPv4 pattern before ending octet</label>
+          <input id="address_prefix_{{ group.id }}" name="address_prefix" value="{{ pattern_parts[0] }}" placeholder="10.1.{index}" required pattern="[^{}]*\{index\}[^{}]*">
+        </div>
+        <div>
+          <label for="ending_octet_{{ group.id }}">Ending IP octet</label>
+          <input id="ending_octet_{{ group.id }}" name="ending_octet" type="number" min="0" max="255" value="{{ pattern_parts[1] }}" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div><label for="index_start_{{ group.id }}">Starting index</label><input id="index_start_{{ group.id }}" name="index_start" type="number" min="0" max="255" value="{{ group.ip_template.index_start if group.ip_template else 1 }}" required></div>
+        <div><label for="index_end_{{ group.id }}">Ending index</label><input id="index_end_{{ group.id }}" name="index_end" type="number" min="0" max="255" value="{{ group.ip_template.index_end if group.ip_template else 254 }}" required></div>
+      </div>
+      <div class="builder-actions"><button class="button button-primary" type="submit">{{ "Save IP template" if group.ip_template else "Set IP template" }}</button></div>
+      {% if group.ip_template %}<p class="form-footnote">Current result: <code>{{ group.ip_template.address_template }}</code>, indexes {{ group.ip_template.index_start }}–{{ group.ip_template.index_end }}.</p>{% endif %}
+    </form>
+  </section>
+{% else %}
+  <p class="muted section-block">Create device groups before configuring their IP templates.</p>
+{% endfor %}
+<section class="section-block">
+  <div class="builder-actions">
+    {% if progress.templates %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='teams') }}">Continue to teams and hosts</a>{% else %}<p class="muted">Set a valid address template and index range for every device group.</p>{% endif %}
+  </div>
+</section>
+
+{% elif active_step == "teams" %}
+<section class="panel form-panel builder-panel">
+  <p class="eyebrow">STEP 4 · TEAM HOSTS</p>
+  <h2>Enroll teams and generate their hosts</h2>
+  {% if available_teams %}
+    <form class="inline-form" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="enroll-team">
+      <input type="hidden" name="step" value="teams">
+      <label for="team_id">Team account</label>
+      <select id="team_id" name="team_id" required><option value="">Select a team</option>{% for team in available_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
+      <button class="button button-primary" type="submit">Enroll and generate hosts</button>
+    </form>
+  {% else %}<p class="muted">All existing teams are enrolled, or no team accounts exist. <a href="{{ url_for('admin.users') }}">Create team accounts</a>.</p>{% endif %}
+</section>
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">HOST QUICK CREATE</p><h2>Team device addresses</h2></div><span class="muted">Generated from each group's assigned IP template</span></div>
+  {% if teams and host_groups %}
+    <div class="table-wrap">
+      <table><thead><tr><th>Team</th>{% for group in host_groups %}<th>{{ group.name }}<small class="table-subtext">{{ group.ip_template.address_template }}</small></th>{% endfor %}</tr></thead><tbody>
+        {% for team in teams %}
+          <tr><td><strong>{{ team.name }}</strong></td>
+            {% for group in host_groups %}
+              {% set host = host_matrix[team.id][group.id] %}
+              <td>
+                {% if host %}
+                  <form class="inline-form builder-host-form" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="save-host-address"><input type="hidden" name="step" value="teams"><input type="hidden" name="host_id" value="{{ host.id }}">
+                    <input aria-label="{{ team.name }} {{ group.name }} IPv4 address" name="address" value="{{ host.address }}" required>
+                    <details class="builder-host-permissions">
+                      <summary>Team edit access</summary>
+                      <label class="checkbox-label"><input type="checkbox" name="team_can_edit_address" {% if host.team_can_edit_address %}checked{% endif %}> Allow team to change address</label>
+                      <label for="allowed_address_ranges_{{ host.id }}">Allowed CIDR ranges / hostnames</label>
+                      <input id="allowed_address_ranges_{{ host.id }}" name="allowed_address_ranges" value="{{ host.allowed_address_ranges }}" maxlength="1000" placeholder="10.1.1.0/24, host.example.org">
+                      <small>Teams can change only this host address, and only to a value in this list.</small>
+                    </details>
+                    <button class="button button-secondary button-small" type="submit">Save host settings</button>
+                  </form>
+                {% else %}<span class="muted">Missing generated host</span>{% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% else %}<tr><td colspan="{{ host_groups|length + 1 }}" class="table-empty">Enroll at least one team.</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+  {% else %}<p class="muted">Create a device group and enroll teams to generate the quick-create host grid.</p>{% endif %}
+  <div class="builder-actions">
+    {% if progress.teams %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks') }}">Continue to score checks</a>{% else %}<p class="muted">Enroll at least one team to continue.</p>{% endif %}
+  </div>
+</section>
+
+{% elif active_step == "checks" %}
+<section class="panel builder-panel">
+  <p class="eyebrow">STEP 5 · SCORING RULES</p>
+  <h2>Configure score checks</h2>
+  <p class="muted">Checks are templates for a device group. Configure a check once, and it runs against that group’s matching host for every enrolled team.</p>
+</section>
+<section class="section-block">
+  <div class="section-heading">
+    <div><p class="eyebrow">DEVICE GROUP PROGRESS</p><h2>Check setup status</h2></div>
+  </div>
+  <div class="group-check-progress-list">
+    {% for group_progress in group_check_progress %}
+      <article class="panel group-check-progress {% if group_progress.complete %}is-complete{% else %}has-warning{% endif %}">
+        <div class="card-heading">
+          <h3>{{ group_progress.group.name }}</h3>
+          <span class="check-progress-status {% if group_progress.complete %}is-complete{% else %}has-warning{% endif %}">
+            {% if group_progress.complete %}<span aria-hidden="true">✓</span> Complete{% else %}<span aria-hidden="true">!</span> Needs attention{% endif %}
+          </span>
+        </div>
+        <p class="muted">
+          {% if group_progress.complete %}
+            {{ group_progress.completed_count }} of {{ group_progress.total_count }} required checks configured
+          {% else %}
+            {{ group_progress.completed_count }} of {{ group_progress.total_count }} required checks ready
+          {% endif %}
+        </p>
+        {% if group_progress["items"] %}
+          <ul class="service-template-list">
+            {% for item in group_progress["items"] %}
+              <li>
+                <span>
+                  {% if item.status == "complete" %}
+                    <span class="check-progress-icon is-complete" aria-label="Complete">✓</span>
+                  {% else %}
+                    <span class="check-progress-icon has-warning" aria-label="Needs attention">!</span>
+                  {% endif %}
+                  {{ item.label }}
+                  {% if item.unexpected %}
+                    <small class="muted">Not selected for this group</small>
+                  {% elif item.status == "missing" %}
+                    <small class="muted">Not configured</small>
+                  {% elif item.status == "warning" %}
+                    <small class="muted">{{ "Paused" if item.service.paused else "Disabled" }}</small>
+                  {% endif %}
+                </span>
+                {% if item.status == "missing" %}
+                  <a class="button button-secondary button-small" href="#required-check-{{ group_progress.group.id }}-{{ item.check_type }}">Configure</a>
+                {% elif item.status == "warning" %}
+                  <a class="button button-secondary button-small" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks', edit_service=item.service.id) }}#service-form">Review</a>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">No supported check types are selected for this device group.</p>
+        {% endif %}
+      </article>
+    {% else %}
+      <p class="muted">Create a device group and select its check types before configuring score checks.</p>
+    {% endfor %}
+  </div>
+</section>
+{% if missing_check_templates %}
+<section class="section-block" id="required-check-templates">
+  <div class="section-heading">
+    <div><p class="eyebrow">REQUIRED CONFIGURATION</p><h2>{{ missing_check_templates|length }} check templates to configure</h2></div>
+  </div>
+  <p class="muted">Configure each selected check type for its device group. The builder will unlock review after every required template is saved.</p>
+  {% for required_group, required_check_type in missing_check_templates %}
+    {% set form_id = "required-check-" ~ required_group.id ~ "-" ~ required_check_type %}
+    {% set required_template = true %}
+    {% include "partials/service_check_form.html" %}
+  {% endfor %}
+</section>
+{% endif %}
+{% if editing_service %}{% include "partials/service_check_form.html" %}{% endif %}
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">CONFIGURED CHECKS</p><h2>{{ services|length }} score checks</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Device group</th><th>Points</th><th>Status</th><th></th></tr></thead><tbody>
+    {% for service in services %}
+      <tr>
+        <td><strong>{{ service.name }}</strong></td>
+        <td>{{ check_catalog.get(service.check_type, {}).get("label", service.check_type|upper) }}</td>
+        <td>{{ service.host_group.name if service.host_group else ("DNS lookup" if service.check_type == "dns" else "Not assigned") }}</td>
+        <td>{{ service.points }}{% if service.points_boost %} + {{ service.points_boost }} boost{% endif %}</td>
+        <td>{% if service.paused %}Paused{% elif service.enabled %}Enabled{% else %}Disabled{% endif %}</td>
+        <td><a class="button button-secondary button-small" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks', edit_service=service.id) }}#service-form">Edit</a></td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="table-empty">Add at least one score check to continue.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="builder-actions">
+    {% if progress.checks %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='review') }}">Continue to review</a>{% else %}<p class="muted">Add at least one enabled check and assign its target device group.</p>{% endif %}
+  </div>
+</section>
+
+{% elif active_step == "review" %}
+<section class="panel builder-panel">
+  <p class="eyebrow">STEP 6 · REVIEW</p>
+  <h2>Review scoreboard setup</h2>
+  <p class="muted">Confirm the configuration before activating scoring.</p>
+  <div class="builder-review-grid">
+    <article><span>Scoreboard</span><strong>{{ competition.name }}</strong><small>{{ competition.interval_seconds }} second rounds · {{ "%.2f"|format(competition.payout_per_point) }} credits per point</small></article>
+    <article><span>IP templates</span><strong>{{ host_groups|selectattr('ip_template')|list|length }}</strong><small>One address pattern per device group</small></article>
+    <article><span>Device groups</span><strong>{{ host_groups|length }}</strong><small>Generated across enrolled teams</small></article>
+    <article><span>Teams</span><strong>{{ teams|length }}</strong><small>{{ teams|length * host_groups|length }} generated hosts</small></article>
+    <article><span>Score checks</span><strong>{{ services|length }}</strong><small>Group-targeted checks shared across teams</small></article>
+  </div>
+  <div class="builder-checklist">
+    {% for step in steps[:-1] %}
+      <p class="{% if progress.get(step, false) %}is-complete{% else %}is-incomplete{% endif %}">
+        <span>{% if progress.get(step, false) %}✓{% else %}·{% endif %}</span>{{ step_labels[step] }}
+      </p>
+    {% endfor %}
+  </div>
+  {% if competition.status == "active" %}
+    <div class="callout-success">This scoreboard is active. Scoring workers will run its checks on schedule.</div>
+  {% else %}
+    <form method="post" class="builder-actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="step" value="review">
+      <button class="button button-primary" type="submit" {% if not builder_ready %}disabled{% endif %}>Activate scoreboard</button>
+      {% if not builder_ready %}<span class="muted">Complete every step before activating.</span>{% endif %}
+    </form>
+  {% endif %}
+</section>
+{% endif %}
+{% if active_step == "checks" %}<script src="{{ url_for('static', filename='check-form.js') }}" defer></script>{% endif %}
+{% endblock %}
