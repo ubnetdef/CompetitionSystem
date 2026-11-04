@@ -141,6 +141,27 @@ if [[ "$docker_ready" != true ]]; then
   exit 1
 fi
 
+validate_app_bind_address() {
+  local address="$1"
+  local octet
+  local -a octets
+
+  if [[ ! "$address" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    echo "APP_BIND_ADDRESS must be an IPv4 address, such as 127.0.0.1 or 192.168.1.10." >&2
+    return 1
+  fi
+
+  IFS=. read -r -a octets <<< "$address"
+  for octet in "${octets[@]}"; do
+    if ((10#$octet > 255)); then
+      echo "APP_BIND_ADDRESS must be an IPv4 address with octets from 0 to 255." >&2
+      return 1
+    fi
+  done
+}
+
+app_bind_address="${APP_BIND_ADDRESS:-127.0.0.1}"
+
 if [[ ! -f .env ]]; then
   read -r -p "Base domain for engine/bank/store/admin sites (example: competition.example.org): " base_domain
   if [[ ! "$base_domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]; then
@@ -164,6 +185,7 @@ POSTGRES_PASSWORD=${postgres_password}
 HTTP_PORT=80
 HTTPS_PORT=443
 APP_PORT=8080
+APP_BIND_ADDRESS=${app_bind_address}
 SESSION_COOKIE_SECURE=false
 SCORING_THREADS=64
 SCORING_TICK_SECONDS=5
@@ -178,6 +200,26 @@ else
     chmod 600 .env
     echo "Added a new credential-encryption key to .env. Keep it private and backed up."
   fi
+  if ! grep -q '^APP_BIND_ADDRESS=' .env; then
+    printf '\nAPP_BIND_ADDRESS=127.0.0.1\n' >> .env
+  fi
+fi
+
+if [[ -z "${APP_BIND_ADDRESS:-}" ]]; then
+  app_bind_address="$(sed -n 's/^APP_BIND_ADDRESS=//p' .env | tail -n 1 | tr -d '\r')"
+  app_bind_address="${app_bind_address:-127.0.0.1}"
+fi
+if [[ "${DATABASE_IMPORT_ONLY:-false}" != "true" ]]; then
+  read -r -p "Web app bind IPv4 address (127.0.0.1 for local only; VM interface IP for a remote proxy) [${app_bind_address}]: " requested_app_bind_address || requested_app_bind_address=""
+  if [[ -n "$requested_app_bind_address" ]]; then
+    app_bind_address="$requested_app_bind_address"
+  fi
+fi
+validate_app_bind_address "$app_bind_address"
+if grep -q '^APP_BIND_ADDRESS=' .env; then
+  sed -i "s/^APP_BIND_ADDRESS=.*/APP_BIND_ADDRESS=${app_bind_address}/" .env
+else
+  printf '\nAPP_BIND_ADDRESS=%s\n' "$app_bind_address" >> .env
 fi
 chmod 600 .env
 
@@ -221,7 +263,7 @@ if [[ "${DATABASE_IMPORT_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
 
-echo "Building and starting the private preview on 127.0.0.1:${APP_PORT:-8080}."
+echo "Building and starting the web app on ${app_bind_address}:${APP_PORT:-8080}."
 echo "This preview does not bind public ports 80/443 or replace the active site."
 docker compose up -d --build --remove-orphans
 
@@ -276,11 +318,23 @@ docker compose ps
 
 cat <<EOF
 
-Preview is running on the VM at http://127.0.0.1:${APP_PORT:-8080}.
+Preview is running on the VM at http://${app_bind_address}:${APP_PORT:-8080}.
+EOF
+
+if [[ "$app_bind_address" == "127.0.0.1" ]]; then
+  cat <<EOF
 For a private remote preview, create an SSH tunnel from your workstation:
   ssh -L ${APP_PORT:-8080}:127.0.0.1:${APP_PORT:-8080} <your-vm>
 Then open http://127.0.0.1:${APP_PORT:-8080}.
+EOF
+else
+  cat <<EOF
+Configure your reverse proxy to use http://${app_bind_address}:${APP_PORT:-8080}.
+Restrict this port to the proxy using your network firewall; it is plain HTTP.
+EOF
+fi
 
+cat <<EOF
 Once the preview is accepted and DNS/ports 80 and 443 are ready, follow the
 "Public deployment and cutover" instructions in README.md.
 EOF

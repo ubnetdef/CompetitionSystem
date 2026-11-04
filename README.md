@@ -36,6 +36,14 @@ The setup script targets **Ubuntu Server 24.04** and checks for Docker, Docker C
 
 The default preview deliberately avoids public ports 80/443 so it can be evaluated on the same VM without displacing the current system. `.env` contains database, signing, and check-credential encryption secrets; keep it private and back it up securely. The installer refuses to start if the credential-encryption key is not exactly 64 hexadecimal characters or if Docker Compose cannot resolve its required settings.
 
+For a reverse proxy running on another host, bind the preview to the VM's IPv4 address that the proxy can reach. Run the same setup command:
+
+```bash
+sudo bash scripts/setup.sh
+```
+
+When prompted for the web app bind IPv4 address, enter the VM interface address reachable from the proxy; press Enter to keep the current value. The installer saves the answer in `.env`, recreates the web container, and prints the matching proxy upstream URL. The default remains `127.0.0.1`; no network address is hard-coded, so use the appropriate interface address for each deployment. The proxy must have a route to the VM, and this plain-HTTP application port must be restricted to the proxy by a firewall or network security rule. Docker-published ports may bypass UFW rules; verify that your firewall filters Docker traffic.
+
 For a **full clean reinstall** on a VM, first back up anything you need, then run:
 
 ```bash

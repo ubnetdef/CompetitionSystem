@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${APP_PORT:-8080}:8000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8000"
     environment: &app-environment
       DATABASE_URL: postgresql+psycopg://competition:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/competition
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}

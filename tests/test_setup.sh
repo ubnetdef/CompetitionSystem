@@ -128,6 +128,7 @@ generated_database_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$TEMP_DIR/fres
 [[ "$generated_secret" != "$generated_credential_key" ]]
 [[ "$(stat -c '%a' "$TEMP_DIR/fresh/.env")" == "600" ]]
 grep -Fxq "BASE_DOMAIN=competition.example.org" "$TEMP_DIR/fresh/.env"
+grep -Fxq "APP_BIND_ADDRESS=127.0.0.1" "$TEMP_DIR/fresh/.env"
 grep -Fxq "SCORING_THREADS=64" "$TEMP_DIR/fresh/.env"
 grep -Fxq "SCORING_TICK_SECONDS=5" "$TEMP_DIR/fresh/.env"
 grep -Fq "compose config --quiet" "$FRESH_LOG"
@@ -138,6 +139,64 @@ grep -Fq "compose exec web flask --app app:create_app bootstrap-admin" "$FRESH_L
 [[ -f "$FRESH_ADMIN" ]]
 if grep -Fq "rm -f test-container" "$FRESH_LOG"; then
   echo "Default installer mode unexpectedly entered the Docker reset path." >&2
+  exit 1
+fi
+
+make_project "$TEMP_DIR/proxy-bind"
+make_stubs "$TEMP_DIR/proxy-bind-stubs"
+PROXY_BIND_PATH="$TEMP_DIR/proxy-bind-stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PROXY_BIND_ADMIN="$TEMP_DIR/proxy-bind-admin"
+PROXY_BIND_COUNTER="$TEMP_DIR/proxy-bind-openssl-count"
+PROXY_BIND_INITIAL_LOG="$TEMP_DIR/proxy-bind-initial-docker.log"
+PROXY_BIND_INITIAL_OUTPUT="$TEMP_DIR/proxy-bind-initial-output.log"
+if ! (
+  cd "$TEMP_DIR/proxy-bind"
+  printf '%s\n' "competition.example.org" |
+    env PATH="$PROXY_BIND_PATH" \
+      TEST_DOCKER_LOG="$PROXY_BIND_INITIAL_LOG" \
+      TEST_ADMIN_EXISTS="$PROXY_BIND_ADMIN" \
+      TEST_OPENSSL_COUNTER="$PROXY_BIND_COUNTER" \
+      bash scripts/setup.sh
+) > "$PROXY_BIND_INITIAL_OUTPUT" 2>&1; then
+  cat "$PROXY_BIND_INITIAL_OUTPUT" >&2
+  exit 1
+fi
+
+PROXY_BIND_LOG="$TEMP_DIR/proxy-bind-docker.log"
+PROXY_BIND_OUTPUT="$TEMP_DIR/proxy-bind-output.log"
+if ! (
+  cd "$TEMP_DIR/proxy-bind"
+  printf '%s\n' "192.0.2.10" |
+    env PATH="$PROXY_BIND_PATH" \
+      TEST_DOCKER_LOG="$PROXY_BIND_LOG" \
+      TEST_ADMIN_EXISTS="$PROXY_BIND_ADMIN" \
+      TEST_OPENSSL_COUNTER="$PROXY_BIND_COUNTER" \
+      bash scripts/setup.sh
+) > "$PROXY_BIND_OUTPUT" 2>&1; then
+  cat "$PROXY_BIND_OUTPUT" >&2
+  exit 1
+fi
+grep -Fxq "APP_BIND_ADDRESS=192.0.2.10" "$TEMP_DIR/proxy-bind/.env"
+grep -Fq "http://192.0.2.10:8080" "$PROXY_BIND_OUTPUT"
+grep -Fq "compose up -d --build --remove-orphans" "$PROXY_BIND_LOG"
+
+sed -i 's/^APP_BIND_ADDRESS=.*/APP_BIND_ADDRESS=999.2.3.4/' "$TEMP_DIR/proxy-bind/.env"
+INVALID_BIND_LOG="$TEMP_DIR/invalid-bind-docker.log"
+INVALID_BIND_OUTPUT="$TEMP_DIR/invalid-bind-output.log"
+if (
+  cd "$TEMP_DIR/proxy-bind"
+  env PATH="$PROXY_BIND_PATH" \
+    TEST_DOCKER_LOG="$INVALID_BIND_LOG" \
+    TEST_ADMIN_EXISTS="$PROXY_BIND_ADMIN" \
+    TEST_OPENSSL_COUNTER="$PROXY_BIND_COUNTER" \
+    bash scripts/setup.sh
+) > "$INVALID_BIND_OUTPUT" 2>&1; then
+  echo "Installer accepted an invalid APP_BIND_ADDRESS." >&2
+  exit 1
+fi
+grep -Fq "APP_BIND_ADDRESS must be an IPv4 address with octets from 0 to 255." "$INVALID_BIND_OUTPUT"
+if grep -Fq "compose up -d --build" "$INVALID_BIND_LOG"; then
+  echo "Installer deployed with an invalid APP_BIND_ADDRESS." >&2
   exit 1
 fi
 
