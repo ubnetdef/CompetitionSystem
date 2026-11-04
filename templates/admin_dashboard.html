@@ -1,18 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Admin · UBNETDEF{% endblock %}
+{% set is_admin = current_user.role == 'admin' %}
+{% block title %}{{ 'Admin' if is_admin else 'Competition Manager' }} · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
-  <div><p class="eyebrow">PLATFORM CONTROL</p><h1>Admin overview</h1><p>Manage competition setup, team access, and store operations.</p></div>
+  <div><p class="eyebrow">{{ 'PLATFORM CONTROL' if is_admin else 'COMPETITION MANAGEMENT' }}</p><h1>{{ 'Admin overview' if is_admin else 'Competition Manager' }}</h1><p>Manage competition setup, team access, and store operations.</p></div>
   <div class="heading-actions"><a class="button button-primary" href="{{ url_for('admin.competitions') }}">Create scoreboard</a></div>
 </section>
-<section class="section-block management-controls-link">
-  <div class="section-heading">
-    <div><p class="eyebrow">PLATFORM SETTINGS</p><h2>Management controls</h2></div>
-    <a class="button button-secondary" href="{{ url_for('admin.management_controls') }}">Open controls</a>
-  </div>
-  <p class="muted">Configure platform-wide scoreboard options and other organizer controls.</p>
-</section>
-<section class="stat-grid">
+{% if is_admin %}
+  <section class="section-block management-controls-link">
+    <div class="section-heading">
+      <div><p class="eyebrow">PLATFORM SETTINGS</p><h2>Management controls</h2></div>
+      <a class="button button-secondary" href="{{ url_for('admin.management_controls') }}">Open controls</a>
+    </div>
+    <p class="muted">Configure platform-wide scoreboard options and restore archived boards.</p>
+  </section>
+{% endif %}
+<section class="stat-grid admin-overview-stats">
   <article class="stat-card"><span>Accounts</span><strong>{{ user_count }}</strong><small>Admin-created access</small></article>
   <article class="stat-card"><span>Teams</span><strong>{{ team_count }}</strong><small>Team accounts</small></article>
   <article class="stat-card"><span>Competitions</span><strong>{{ competitions|length }}</strong><small>Across all statuses</small></article>

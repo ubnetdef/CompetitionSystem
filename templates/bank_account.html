@@ -1,12 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Team bank · UBNETDEF{% endblock %}
 {% block content %}
-<section class="page-heading page-heading-row"><div><p class="eyebrow">TEAM BANK</p><h1>{{ team.name }}</h1><p>Your shared competition credit account.</p></div><div class="balance-card"><span>Available balance</span><strong>{{ "%.2f"|format(balance) }} <small>cr</small></strong></div></section>
+<section class="page-heading page-heading-row"><div><p class="eyebrow">TEAM BANK</p><h1>{{ team.name }}</h1><p>Your shared competition dollar account.</p></div><div class="balance-card"><span>Available balance</span><strong>{{ balance|dollars }}</strong></div></section>
 <section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">ACCOUNT ACTIVITY</p><h2>Recent transactions</h2></div><a href="{{ site_links.store }}/store">Spend credits in the store →</a></div>
-  <div class="table-wrap"><table><thead><tr><th>Date</th><th>Description</th><th>Type</th><th class="number">Amount</th></tr></thead><tbody>
-    {% for transaction in transactions %}<tr><td>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td>{{ transaction.description }}</td><td><span class="pill pill-{{ transaction.kind }}">{{ transaction.kind }}</span></td><td class="number {{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ "%.2f"|format(transaction.amount) }}</td></tr>
-    {% else %}<tr><td colspan="4" class="table-empty">No transactions yet. Competition points and organizer adjustments appear here.</td></tr>{% endfor %}
+  <div class="section-heading"><div><p class="eyebrow">ACCOUNT ACTIVITY</p><h2>Recent transactions</h2></div><a href="{{ site_links.store }}/store">Shop with your balance →</a></div>
+  <form class="management-filters" method="get">
+    <div><label for="q">Search</label><input id="q" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search descriptions"></div>
+    <div><label for="kind">Type</label><select id="kind" name="kind"><option value="">All types</option><option value="credit" {% if request.args.get('kind') == 'credit' %}selected{% endif %}>Deposit</option><option value="debit" {% if request.args.get('kind') == 'debit' %}selected{% endif %}>Withdrawal</option></select></div>
+    <div><label for="source">Source</label><select id="source" name="source"><option value="">All sources</option><option value="staff" {% if request.args.get('source') == 'staff' %}selected{% endif %}>Staff adjustment</option><option value="scoring" {% if request.args.get('source') == 'scoring' %}selected{% endif %}>Scoring</option><option value="store" {% if request.args.get('source') == 'store' %}selected{% endif %}>Store</option><option value="system" {% if request.args.get('source') == 'system' %}selected{% endif %}>System</option></select></div>
+    <div><label for="start_date">From</label><input id="start_date" name="start_date" type="date" value="{{ request.args.get('start_date', '') }}"></div>
+    <div><label for="end_date">To</label><input id="end_date" name="end_date" type="date" value="{{ request.args.get('end_date', '') }}"></div>
+    <div><label for="min_amount">Minimum amount ($)</label><input id="min_amount" name="min_amount" type="number" min="0" step="1" value="{{ request.args.get('min_amount', '') }}"></div>
+    <div><label for="max_amount">Maximum amount ($)</label><input id="max_amount" name="max_amount" type="number" min="0" step="1" value="{{ request.args.get('max_amount', '') }}"></div>
+    <div class="filter-actions"><button class="button button-primary button-small" type="submit">Filter activity</button><a class="button button-quiet button-small" href="{{ url_for('bank.team_account') }}">Clear</a></div>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th>Transaction</th><th>Date</th><th>Description</th><th>Type</th><th class="number">Amount</th></tr></thead><tbody>
+    {% for transaction in transactions %}<tr><td><a class="table-action" href="{{ url_for('bank.transaction_detail', transaction_id=transaction.id) }}">#{{ transaction.id }}</a></td><td>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td>{{ transaction.description }}</td><td><span class="pill pill-{{ transaction.kind }}">{{ "Deposit" if transaction.kind == "credit" else "Withdrawal" }}</span></td><td class="number {{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ transaction.amount|dollars }}</td></tr>
+    {% else %}<tr><td colspan="5" class="table-empty">No transactions match these filters.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}

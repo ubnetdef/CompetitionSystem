@@ -1,6 +1,6 @@
 import os
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import click
 from flask import Flask, flash, redirect, render_template, request, url_for
@@ -10,6 +10,7 @@ from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .extensions import db, login_manager
+from .utils import format_dollars
 
 csrf = CSRFProtect()
 migrate = Migrate()
@@ -35,9 +36,9 @@ def create_app(test_config=None):
         == "true",
         SESSION_COOKIE_DOMAIN=os.environ.get("SESSION_COOKIE_DOMAIN") or None,
         PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
-        SCORING_THREADS=max(1, min(int(os.environ.get("SCORING_THREADS", "8")), 64)),
+        SCORING_THREADS=max(1, min(int(os.environ.get("SCORING_THREADS", "64")), 64)),
         SCORING_TICK_SECONDS=max(
-            5, min(int(os.environ.get("SCORING_TICK_SECONDS", "15")), 300)
+            5, min(int(os.environ.get("SCORING_TICK_SECONDS", "5")), 300)
         ),
         DEFAULT_PAYOUT_PER_POINT=Decimal(
             os.environ.get("DEFAULT_PAYOUT_PER_POINT", "10")
@@ -49,6 +50,24 @@ def create_app(test_config=None):
     )
     if test_config:
         app.config.update(test_config)
+
+    try:
+        default_payout = Decimal(str(app.config["DEFAULT_PAYOUT_PER_POINT"]))
+    except (InvalidOperation, TypeError, ValueError) as error:
+        raise ValueError(
+            "DEFAULT_PAYOUT_PER_POINT must be a whole-dollar amount from 1 to 1,000,000."
+        ) from error
+    if (
+        not default_payout.is_finite()
+        or default_payout < 1
+        or default_payout > Decimal("1000000")
+        or default_payout != default_payout.to_integral_value()
+    ):
+        raise ValueError(
+            "DEFAULT_PAYOUT_PER_POINT must be a whole-dollar amount from 1 to 1,000,000."
+        )
+    app.config["DEFAULT_PAYOUT_PER_POINT"] = default_payout.quantize(Decimal("1"))
+    app.jinja_env.filters["dollars"] = format_dollars
 
     os.makedirs(app.instance_path, exist_ok=True)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)

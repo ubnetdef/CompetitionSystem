@@ -9,9 +9,21 @@ def parse_amount(value):
         amount = Decimal(value)
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if not amount.is_finite() or amount <= 0 or amount > Decimal("1000000"):
+    if (
+        not amount.is_finite()
+        or amount <= 0
+        or amount > Decimal("1000000")
+        or amount != amount.to_integral_value()
+    ):
         return None
-    return amount.quantize(Decimal("0.01"))
+    return amount.quantize(Decimal("1"))
+
+
+def format_dollars(value):
+    amount = Decimal(str(value))
+    if not amount.is_finite() or amount != amount.to_integral_value():
+        raise ValueError("Dollar amounts must be whole dollars.")
+    return f"${amount:,.0f}"
 
 
 def parse_local_datetime(value):

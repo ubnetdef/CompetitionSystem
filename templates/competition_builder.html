@@ -47,7 +47,7 @@
 <section class="panel form-panel builder-panel">
   <p class="eyebrow">STEP 1 · SCOREBOARD</p>
   <h2>Scoreboard details</h2>
-  <p class="muted">Set the name, round timing, and how many credits teams earn per point.</p>
+  <p class="muted">Set the name, round timing, and how many dollars teams earn per point.</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="save-details">
@@ -62,8 +62,8 @@
         <input id="interval_seconds" name="interval_seconds" type="number" min="15" max="3600" value="{{ competition.interval_seconds }}" required>
       </div>
       <div>
-        <label for="payout_per_point">Credits per point</label>
-        <input id="payout_per_point" name="payout_per_point" type="number" min="0.01" max="1000000" step="0.01" value="{{ '%.2f'|format(competition.payout_per_point) }}" required>
+        <label for="payout_per_point">Dollars per point</label>
+        <input id="payout_per_point" name="payout_per_point" type="number" min="1" max="1000000" step="1" value="{{ '%.0f'|format(competition.payout_per_point) }}" required>
       </div>
     </div>
     <div class="builder-actions">
@@ -86,14 +86,12 @@
     <input id="host_group_name" name="host_group_name" maxlength="120" value="{{ edit_host_group.name if edit_host_group else '' }}" placeholder="Ubuntu1" required>
     <fieldset class="check-type-fieldset">
       <legend>Check types for this device group</legend>
-      <p class="muted">Only supported types can be selected. SMB, IMAP, and CalDav are shown for reference but are not implemented yet.</p>
       <div class="check-type-grid">
-        {% for key, definition in check_catalog.items() %}
+        {% for key, definition in check_catalog.items() if definition.available %}
           <label class="checkbox-label">
             <input type="checkbox" name="check_types" value="{{ key }}"
-                   {% if edit_host_group and key in (edit_host_group.check_types or []) %}checked{% endif %}
-                   {% if not definition.available %}disabled{% endif %}>
-            {{ definition.label }}{% if not definition.available %} (not supported yet){% endif %}
+                   {% if edit_host_group and key in (edit_host_group.check_types or []) %}checked{% endif %}>
+            {{ definition.label }}
           </label>
         {% endfor %}
       </div>
@@ -110,7 +108,7 @@
     {% for group in host_groups %}
       <article class="panel">
         <div class="card-heading"><h3>{{ group.name }}</h3><span class="pill">{{ group.hosts|length }} hosts</span></div>
-        <p><strong>Check types:</strong> {{ group.check_types|map('upper')|join(', ') }}</p>
+        <p><strong>Check types:</strong> {% for check_type in (group.check_types or []) if check_catalog.get(check_type, {}).get("available", false) %}{{ check_type|upper }}{% if not loop.last %}, {% endif %}{% else %}None{% endfor %}</p>
         <p class="muted">{{ "IP template configured" if group.ip_template else "IP template needed in the next step" }}</p>
         <div class="builder-actions">
           <a class="button button-secondary button-small" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='groups', edit_host_group=group.id) }}">Edit</a>
@@ -302,7 +300,7 @@
     {% for service in services %}
       <tr>
         <td><strong>{{ service.name }}</strong></td>
-        <td>{{ check_catalog.get(service.check_type, {}).get("label", service.check_type|upper) }}</td>
+        <td>{{ check_catalog.get(service.check_type, {}).get("label") if check_catalog.get(service.check_type, {}).get("available", false) else "Legacy check" }}</td>
         <td>{{ service.host_group.name if service.host_group else ("DNS lookup" if service.check_type == "dns" else "Not assigned") }}</td>
         <td>{{ service.points }}{% if service.points_boost %} + {{ service.points_boost }} boost{% endif %}</td>
         <td>{% if service.paused %}Paused{% elif service.enabled %}Enabled{% else %}Disabled{% endif %}</td>
@@ -321,7 +319,7 @@
   <h2>Review scoreboard setup</h2>
   <p class="muted">Confirm the configuration before activating scoring.</p>
   <div class="builder-review-grid">
-    <article><span>Scoreboard</span><strong>{{ competition.name }}</strong><small>{{ competition.interval_seconds }} second rounds · {{ "%.2f"|format(competition.payout_per_point) }} credits per point</small></article>
+    <article><span>Scoreboard</span><strong>{{ competition.name }}</strong><small>{{ competition.interval_seconds }} second rounds · {{ competition.payout_per_point|dollars }} per point</small></article>
     <article><span>IP templates</span><strong>{{ host_groups|selectattr('ip_template')|list|length }}</strong><small>One address pattern per device group</small></article>
     <article><span>Device groups</span><strong>{{ host_groups|length }}</strong><small>Generated across enrolled teams</small></article>
     <article><span>Teams</span><strong>{{ teams|length }}</strong><small>{{ teams|length * host_groups|length }} generated hosts</small></article>

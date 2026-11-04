@@ -82,5 +82,6 @@ def me():
 def my_bank():
     return jsonify(
         team_id=current_user.team_id,
-        balance=str(balance_for(current_user.team_id)),
+        balance=format(balance_for(current_user.team_id), ".0f"),
+        currency="USD",
     )

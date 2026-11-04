@@ -2,7 +2,12 @@ import logging
 import time
 
 from . import create_app
-from .tasks import claim_next_round, run_scoring_round, schedule_due_rounds
+from .tasks import (
+    claim_next_round,
+    recover_stale_rounds,
+    run_scoring_round,
+    schedule_due_rounds,
+)
 
 
 def run_worker(flask_app=None):
@@ -11,6 +16,15 @@ def run_worker(flask_app=None):
     app.logger.info("Database-backed scoring worker started.")
 
     while True:
+        try:
+            recover_stale_rounds(app)
+        except Exception:
+            app.logger.exception("Could not recover abandoned scoring rounds.")
+            with app.app_context():
+                from .extensions import db
+
+                db.session.rollback()
+
         try:
             schedule_due_rounds(app)
         except Exception:

@@ -45,6 +45,7 @@ class PlatformSetting(db.Model):
         db.Boolean, nullable=False, default=False
     )
     score_check_hints_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    check_type_payouts = db.Column(db.JSON, nullable=False, default=dict)
 
 
 class Team(db.Model):
@@ -62,6 +63,12 @@ class Team(db.Model):
 
 class Competition(db.Model):
     __tablename__ = "competitions"
+    __table_args__ = (
+        db.CheckConstraint(
+            "payout_per_point = CAST(payout_per_point AS BIGINT)",
+            name="ck_competitions_payout_whole_dollars",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
@@ -246,6 +253,7 @@ class ScoreRound(db.Model):
     status = db.Column(db.String(20), nullable=False, default="queued")
     error_message = db.Column(db.String(500))
     started_at = db.Column(db.DateTime(timezone=True))
+    heartbeat_at = db.Column(db.DateTime(timezone=True))
     completed_at = db.Column(db.DateTime(timezone=True))
     competition = db.relationship("Competition", back_populates="rounds")
     results = db.relationship("ScoreResult", back_populates="score_round", cascade="all, delete-orphan")
@@ -273,6 +281,12 @@ class ScoreResult(db.Model):
 
 class BankTransaction(db.Model):
     __tablename__ = "bank_transactions"
+    __table_args__ = (
+        db.CheckConstraint(
+            "amount = CAST(amount AS BIGINT)",
+            name="ck_bank_transactions_amount_whole_dollars",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     team_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=False, index=True)
@@ -289,6 +303,12 @@ class BankTransaction(db.Model):
 
 class Product(db.Model):
     __tablename__ = "products"
+    __table_args__ = (
+        db.CheckConstraint(
+            "price = CAST(price AS BIGINT)",
+            name="ck_products_price_whole_dollars",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
@@ -313,6 +333,12 @@ class ProductQuestion(db.Model):
 
 class Order(db.Model):
     __tablename__ = "orders"
+    __table_args__ = (
+        db.CheckConstraint(
+            "unit_price = CAST(unit_price AS BIGINT)",
+            name="ck_orders_unit_price_whole_dollars",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     team_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=False, index=True)

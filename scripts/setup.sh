@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+umask 077
+
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
+
+if [[ ! -f docker-compose.yml || ! -f Dockerfile || ! -f requirements.txt ]]; then
+  echo "Run the installer from a complete CompetitionSystem checkout." >&2
+  exit 1
+fi
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run this setup with sudo: sudo bash scripts/setup.sh" >&2
@@ -42,9 +49,30 @@ if ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose v2 is unavailable after prerequisite installation." >&2
   exit 1
 fi
+if ! command -v docker >/dev/null 2>&1; then
+  echo "The Docker CLI is unavailable after prerequisite installation." >&2
+  exit 1
+fi
+if ! command -v openssl >/dev/null 2>&1; then
+  echo "OpenSSL is unavailable after prerequisite installation." >&2
+  exit 1
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl enable --now docker
+fi
+
+docker_ready=false
+for attempt in $(seq 1 45); do
+  if docker info >/dev/null 2>&1; then
+    docker_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$docker_ready" != true ]]; then
+  echo "The Docker daemon did not become ready. Check that Docker is installed and running." >&2
+  exit 1
 fi
 
 if [[ ! -f .env ]]; then
@@ -71,8 +99,8 @@ HTTP_PORT=80
 HTTPS_PORT=443
 APP_PORT=8080
 SESSION_COOKIE_SECURE=false
-SCORING_THREADS=8
-SCORING_TICK_SECONDS=15
+SCORING_THREADS=64
+SCORING_TICK_SECONDS=5
 DEFAULT_PAYOUT_PER_POINT=10
 EOF
   chmod 600 .env
@@ -85,9 +113,27 @@ else
     echo "Added a new credential-encryption key to .env. Keep it private and backed up."
   fi
 fi
+chmod 600 .env
+
+credential_key="$(sed -n 's/^CHECK_CREDENTIAL_KEY=//p' .env | tail -n 1 | tr -d '\r')"
+if [[ "$credential_key" == \"*\" ]]; then
+  credential_key="${credential_key:1:${#credential_key}-2}"
+elif [[ "$credential_key" == \'*\' ]]; then
+  credential_key="${credential_key:1:${#credential_key}-2}"
+fi
+if [[ ! "$credential_key" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "CHECK_CREDENTIAL_KEY must be configured as 64 hexadecimal characters." >&2
+  exit 1
+fi
+
+if ! docker compose config --quiet; then
+  echo "Docker Compose configuration is invalid. Review the required values in .env." >&2
+  exit 1
+fi
 
 if [[ "${DATABASE_IMPORT_ONLY:-false}" == "true" ]]; then
   echo "Starting PostgreSQL only for a database import."
+  docker compose stop web scoring-worker >/dev/null
   docker compose up -d database
 
   database_ready=false
@@ -113,17 +159,37 @@ echo "Building and starting the private preview on 127.0.0.1:${APP_PORT:-8080}."
 echo "This preview does not bind public ports 80/443 or replace the active site."
 docker compose up -d --build --remove-orphans
 
-ready=false
+web_ready=false
 for attempt in $(seq 1 45); do
-  if docker compose exec -T web flask --app app:create_app db-check >/dev/null 2>&1; then
-    ready=true
+  if docker compose exec -T web flask --app app:create_app db-check >/dev/null 2>&1 &&
+    docker compose exec -T web python -c \
+      "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/healthz', timeout=5).read()" \
+      >/dev/null 2>&1; then
+    web_ready=true
     break
   fi
   sleep 2
 done
 
-if [[ "$ready" != true ]]; then
-  echo "The application did not become ready. Recent service logs follow:" >&2
+if [[ "$web_ready" != true ]]; then
+  echo "The web app and database did not become ready. Recent service logs follow:" >&2
+  docker compose logs --tail=80 web database scoring-worker >&2
+  exit 1
+fi
+
+worker_ready=false
+for attempt in $(seq 1 45); do
+  worker_container_id="$(docker compose ps -q scoring-worker | head -n 1)"
+  if [[ -n "$worker_container_id" ]] &&
+    [[ "$(docker inspect --format '{{.State.Health.Status}}' "$worker_container_id" 2>/dev/null)" == "healthy" ]] &&
+    docker compose exec -T scoring-worker flask --app app:create_app db-check >/dev/null 2>&1; then
+    worker_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$worker_ready" != true ]]; then
+  echo "The scoring worker did not become ready. Recent service logs follow:" >&2
   docker compose logs --tail=80 web database scoring-worker >&2
   exit 1
 fi
@@ -134,6 +200,13 @@ else
   echo "Create the first platform administrator now."
   docker compose exec web flask --app app:create_app bootstrap-admin
 fi
+
+if ! docker compose exec -T web flask --app app:create_app has-admin >/dev/null 2>&1; then
+  echo "No platform administrator was found after bootstrap." >&2
+  exit 1
+fi
+
+docker compose ps
 
 cat <<EOF
 

@@ -6,29 +6,40 @@
   <div class="heading-actions"><span class="pill pill-{{ competition.status }}">{{ competition.status }}</span>{% if request.args.get('return_to') == 'builder' %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks') }}">Back to scoreboard builder</a>{% else %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id) }}">Open scoreboard builder</a>{% endif %}<a class="button button-secondary" href="{{ url_for('admin.competitions') }}">All scoreboards</a></div>
 </section>
 <section class="panel status-panel">
-  <div><p class="eyebrow">LIFECYCLE</p><h2>Competition status</h2><p>Scoring interval: {{ competition.interval_seconds }} seconds · {{ "%.2f"|format(competition.payout_per_point) }} credits per point</p></div>
+  <div><p class="eyebrow">LIFECYCLE</p><h2>Competition status</h2><p>Scoring interval: {{ competition.interval_seconds }} seconds · {{ competition.payout_per_point|dollars }} per point</p></div>
   <form class="inline-form" method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="status">
     <select name="status"><option value="draft" {% if competition.status == 'draft' %}selected{% endif %}>Draft</option><option value="active" {% if competition.status == 'active' %}selected{% endif %}>Active</option><option value="paused" {% if competition.status == 'paused' %}selected{% endif %}>Paused</option><option value="completed" {% if competition.status == 'completed' %}selected{% endif %}>Completed</option></select>
     <button class="button button-primary" type="submit">Update status</button>
   </form>
 </section>
-<section class="split-layout section-block">
-  <form class="panel form-panel" method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add-team">
-    <p class="eyebrow">COMPETITOR SETUP</p><h2>Enroll a team</h2>
-    {% if available_teams %}
-      <label for="team_id">Team account</label><select id="team_id" name="team_id" required>{% for team in available_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
-      <label for="address">Host address <span class="optional">(hostname or IP)</span></label><input id="address" name="address" placeholder="10.0.0.15 or team-01.example.net">
-      <button class="button button-primary" type="submit">Enroll team</button>
-    {% else %}<p class="muted">All existing teams are enrolled, or no teams have been created yet. <a href="{{ url_for('admin.users') }}">Create a team account</a>.</p>{% endif %}
-  </form>
+<section class="split-layout section-block competition-setup-layout">
+  <div class="competition-setup-column">
+    <form class="panel form-panel" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add-team">
+      <p class="eyebrow">COMPETITOR SETUP</p><h2>Enroll a team</h2>
+      {% if available_teams %}
+        <label for="team_id">Team account</label><select id="team_id" name="team_id" required>{% for team in available_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
+        {% if not host_groups %}
+          <label for="address">Legacy host address <span class="optional">(hostname or IP)</span></label><input id="address" name="address" placeholder="10.0.0.15 or team-01.example.net">
+        {% endif %}
+        <button class="button button-primary" type="submit">Enroll team</button>
+      {% else %}<p class="muted">All existing teams are enrolled, or no teams have been created yet. <a href="{{ url_for('admin.users') }}">Create a team account</a>.</p>{% endif %}
+    </form>
+    <section class="panel competition-live-standings">
+      <div class="section-heading"><div><p class="eyebrow">LIVE STANDINGS</p><h2>Scoreboard</h2></div><a href="{{ url_for('main.scoreboard', competition=competition.id) }}">Public scoreboard →</a></div>
+      <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Team</th><th>Points</th></tr></thead><tbody>
+        {% for row in standings %}<tr><td>{{ loop.index }}</td><td>{{ row.name }}</td><td class="score-number">{{ row.score }}</td></tr>{% else %}<tr><td colspan="3" class="table-empty">No scores have been recorded.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
+  </div>
   {% set form_config = (editing_service.check_config or {}) if editing_service else {} %}
   <form class="panel form-panel" method="post" id="service-form" data-builder-mode="false" data-dns-preview-url="{{ url_for('admin.dns_expected_answer') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="{{ 'update-service' if editing_service else 'add-service' }}">
     {% if request.args.get('return_to') == 'builder' %}<input type="hidden" name="return_to_builder" value="1">{% endif %}
     {% if editing_service %}<input type="hidden" name="service_id" value="{{ editing_service.id }}">{% endif %}
+    {% if editing_service and editing_service.service_group_id %}<input type="hidden" name="service_group_id" value="{{ editing_service.service_group_id }}">{% endif %}
     <p class="eyebrow">SCORING CONFIGURATION</p>
     <h2>{{ "Edit service check" if editing_service else "Add service check" }}</h2>
     <label for="service_name">Service name</label><input id="service_name" name="service_name" maxlength="120" value="{{ editing_service.name if editing_service else '' }}" required>
@@ -42,7 +53,7 @@
     <label for="check_type">Check type</label>
     {% if editing_service %}
       <select id="check_type" disabled>
-        <option value="{{ editing_service.check_type }}" selected>{{ check_catalog.get(editing_service.check_type, {}).get("label", editing_service.check_type|upper ~ " (legacy)") }}</option>
+        <option value="{{ editing_service.check_type }}" selected>{{ check_catalog.get(editing_service.check_type, {}).get("label") if check_catalog.get(editing_service.check_type, {}).get("available", false) else "Legacy check" }}</option>
       </select>
       <input type="hidden" name="check_type" value="{{ editing_service.check_type }}">
     {% else %}
@@ -55,9 +66,6 @@
       <option value="ldap">LDAP read-only search (TLS)</option>
       <option value="sql">MySQL read-only health check (TLS)</option>
       <option value="ftp">FTPS read-only file check</option>
-      {% for key, definition in check_catalog.items() if not definition.available %}
-        <option value="{{ key }}" disabled>{{ definition.label }} — not enabled</option>
-      {% endfor %}
     </select>
     {% endif %}
     {% if editing_service and editing_service.check_type == "tcp" %}
@@ -163,13 +171,6 @@
       <div><label for="points_boost">Points Boost <span class="optional">(added on pass)</span></label><input id="points_boost" name="points_boost" type="number" min="0" max="10000" value="{{ editing_service.points_boost if editing_service else 0 }}" required></div>
       <div><label for="timeout_seconds">Timeout (seconds)</label><input id="timeout_seconds" name="timeout_seconds" type="number" min="1" max="30" value="{{ editing_service.timeout_seconds if editing_service else 3 }}" required></div>
     </div>
-    <label for="service_group_id">Service group <span class="optional">(optional)</span></label>
-    <select id="service_group_id" name="service_group_id">
-      <option value="">No group</option>
-      {% for group in service_groups %}
-        <option value="{{ group.id }}" {% if editing_service and editing_service.service_group_id == group.id %}selected{% endif %}>{{ group.display_name }}</option>
-      {% endfor %}
-    </select>
     <label class="checkbox-label"><input type="checkbox" name="paused" {% if editing_service and editing_service.paused %}checked{% endif %}> Pause scoring for this service (skip its checks and points)</label>
     <label class="checkbox-label"><input type="checkbox" name="hidden_from_scoreboard" {% if editing_service and editing_service.hidden_from_scoreboard %}checked{% endif %}> Hide from per-service scoreboard details (currently team totals only; points still count)</label>
     <button class="button button-primary" type="submit">{{ "Save check" if editing_service else "Add check" }}</button>
@@ -178,39 +179,11 @@
   </form>
 </section>
 <section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">SERVICE ORGANIZATION</p><h2>Service groups</h2></div></div>
-  <form class="panel inline-form" method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="add-service-group">
-    <label for="service_group_name">Group name</label><input id="service_group_name" name="service_group_name" maxlength="120" required>
-    <label for="service_group_display_name">Display name <span class="optional">(optional)</span></label><input id="service_group_display_name" name="service_group_display_name" maxlength="120">
-    <button class="button button-secondary" type="submit">Add group</button>
-  </form>
-  {% if service_groups %}
-    <div class="card-grid section-block">
-      {% for group in service_groups %}
-        <article class="panel"><h3>{{ group.display_name }}</h3><p class="muted">{{ group.name }}</p></article>
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="muted">Groups organize checks in this competition; they do not deploy or route worker containers.</p>
-  {% endif %}
-</section>
-<section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">COMPETITION TEAMS</p><h2>{{ teams|length }} enrolled</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Team</th><th>Scoring host</th><th>Update host</th></tr></thead><tbody>
-    {% for team in teams %}
-      {% set host = team_hosts.get(team.id) %}
-      <tr><td>{{ team.name }}</td><td>{{ host.address if host else "Not configured" }}</td>
-        <td><form class="inline-form" method="post" action="{{ url_for('admin.set_host', competition_id=competition.id, team_id=team.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="address" placeholder="hostname or IP" value="{{ host.address if host else '' }}" required><button class="button button-secondary button-small">Save</button></form></td></tr>
-    {% else %}<tr><td colspan="3" class="table-empty">Enroll teams before activating this competition.</td></tr>{% endfor %}
-  </tbody></table></div>
-</section>
-<section class="section-block">
   <div class="section-heading"><div><p class="eyebrow">SERVICE CHECKS</p><h2>{{ competition.services|length }} configured</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Service</th><th>Check</th><th>Points</th><th>Group</th><th>Status</th><th>Timeout</th><th>Actions</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>Service</th><th>Check</th><th>Points</th><th>Status</th><th>Timeout</th><th>Actions</th></tr></thead><tbody>
     {% for service in competition.services %}
       {% set config = service.check_config or {} %}
-      <tr><td><strong>{{ service.name }}</strong></td>
+      <tr><td><strong>{{ service.name }}</strong>{% if service.host_group %}<small class="table-subtext">Target: {{ service.host_group.name }}</small>{% endif %}</td>
         <td>
           {% if service.check_type == 'dns' %}
             DNS {{ config.get('record_type', 'A') }} · {{ config.get('lookup', '') }} → {{ config.get('expected_output', '') }}
@@ -229,40 +202,29 @@
           {% elif service.check_type == 'ftp' %}
             FTPS read · {{ config.get('read_filename', '') }} · :{{ service.port }}
           {% else %}
-            {{ service.check_type|upper }} (legacy)
+            Legacy check
           {% endif %}
         </td>
         <td>{{ service.points }}{% if service.points_boost %} + {{ service.points_boost }} boost{% endif %}</td>
-        <td>{{ service.service_group.display_name if service.service_group else "—" }}{% if service.host_group %}<small class="table-subtext">Target: {{ service.host_group.name }}</small>{% endif %}</td>
         <td>{% if service.paused %}Paused{% elif service.hidden_from_scoreboard %}Hidden{% else %}Active{% endif %}</td>
         <td>{{ service.timeout_seconds }} sec</td>
         <td><a class="button button-secondary button-small" href="{{ url_for('admin.competition_detail', competition_id=competition.id, edit_service=service.id) }}#service-form">Edit</a></td></tr>
-    {% else %}<tr><td colspan="7" class="table-empty">Add one or more service checks before activating.</td></tr>{% endfor %}
-  </tbody></table></div>
-</section>
-<section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">LEGACY CHECK CATALOG</p><h2>Types awaiting a safe runner</h2></div></div>
-  <div class="card-grid">
-    {% for key, definition in check_catalog.items() if not definition.available %}
-      <article class="panel">
-        <h3>{{ definition.label }}</h3>
-        <p>{{ definition.description }}</p>
-        <p class="muted">Legacy properties: {{ definition.properties|join(", ") }}</p>
-      </article>
-    {% endfor %}
-  </div>
-</section>
-<section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">LIVE STANDINGS</p><h2>Scoreboard</h2></div><a href="{{ url_for('main.scoreboard', competition=competition.id) }}">Public scoreboard →</a></div>
-  <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Team</th><th>Points</th></tr></thead><tbody>
-    {% for row in standings %}<tr><td>{{ loop.index }}</td><td>{{ row.name }}</td><td class="score-number">{{ row.score }}</td></tr>{% else %}<tr><td colspan="3" class="table-empty">No scores have been recorded.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="6" class="table-empty">Add one or more service checks before activating.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 <section class="section-block">
   <div class="section-heading"><div><p class="eyebrow">ROUND HISTORY</p><h2>Recent scoring rounds</h2></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Round</th><th>Status</th><th>Started</th><th>Result / error</th></tr></thead><tbody>
-    {% for round in rounds %}<tr><td>#{{ round.number }}</td><td><span class="pill pill-{{ round.status }}">{{ round.status }}</span></td><td>{{ round.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if round.started_at else "—" }}</td><td>{{ round.error_message or (round.completed_at.strftime("%Y-%m-%d %H:%M:%S UTC") if round.completed_at else "Queued") }}</td></tr>{% else %}<tr><td colspan="4" class="table-empty">No rounds have been scheduled.</td></tr>{% endfor %}
+  <p class="muted" data-rounds-live-status role="status" aria-live="polite">Connecting to live round updates…</p>
+  <div class="table-wrap"><table data-round-history data-rounds-url="{{ url_for('admin.competition_rounds_live', competition_id=competition.id) }}" data-poll-ms="5000"><thead><tr><th>Round</th><th>Status</th><th>Started</th><th>Duration</th><th>Result / error</th></tr></thead><tbody>
+    {% for round in rounds %}<tr>
+      <td>#{{ round.number }}</td>
+      <td><span class="pill pill-{{ round.status }}">{{ round.status }}</span></td>
+      <td>{{ round.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") if round.started_at else "—" }}</td>
+      <td data-round-duration data-started-at="{{ round.started_at.isoformat() if round.started_at else '' }}" data-completed-at="{{ round.completed_at.isoformat() if round.completed_at else '' }}">—</td>
+      <td>{{ round.error_message or (round.completed_at.strftime("%Y-%m-%d %H:%M:%S UTC") if round.completed_at else ("Scoring in progress" if round.status == "running" else "Queued")) }}</td>
+    </tr>{% else %}<tr><td colspan="5" class="table-empty">No rounds have been scheduled.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 <script src="{{ url_for('static', filename='check-form.js') }}" defer></script>
+<script src="{{ url_for('static', filename='competition-rounds-live.js') }}" defer></script>
 {% endblock %}

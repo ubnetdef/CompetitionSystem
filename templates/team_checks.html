@@ -40,7 +40,7 @@
           <article class="panel team-check-card">
             <div class="card-heading">
               <div><p class="eyebrow">{{ service.host_group.name if service.host_group else 'General check' }}</p><h3>{{ service.name }}</h3></div>
-              <span class="pill">{{ service.check_type|upper }}</span>
+              <span class="pill">{{ service.check_type|upper if service.check_type not in ["smb", "imap", "caldav"] else "Legacy check" }}</span>
             </div>
             <div class="team-check-panels">
               <section class="team-check-data-panel" aria-label="Latest check result">

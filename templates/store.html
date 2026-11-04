@@ -2,20 +2,29 @@
 {% block title %}Store · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
-  <div><p class="eyebrow">COMPETITION MARKETPLACE</p><h1>Team store</h1><p>Use competition credits to request items and track order fulfillment.</p></div>
+  <div><p class="eyebrow">COMPETITION MARKETPLACE</p><h1>Team store</h1><p>Use your team balance to request items and track order fulfillment.</p></div>
   <div class="heading-actions">
-    {% if current_user.is_authenticated and current_user.role == 'team' %}<a class="button button-secondary" href="{{ url_for('store.orders') }}">My orders</a><a class="balance-chip" href="{{ site_links.bank }}/bank">Balance {{ "%.2f"|format(balance) }} cr</a>
-    {% elif current_user.is_authenticated and current_user.role in ['admin', 'organizer'] %}<a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.manage_orders') }}">Manage orders</a>
+    {% if current_user.is_authenticated and current_user.role == 'team' %}<a class="button button-secondary" href="{{ url_for('store.orders') }}">My orders</a><a class="balance-chip" href="{{ site_links.bank }}/bank">Balance {{ balance|dollars }}</a>
+    {% elif current_user.is_authenticated and current_user.role in ['admin', 'banker', 'organizer'] %}<a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.manage_orders') }}">Manage orders</a>
     {% elif not current_user.is_authenticated %}<a class="button button-primary" href="{{ url_for('auth.login') }}">Sign in to purchase</a>{% endif %}
   </div>
 </section>
+{% if show_store_filters %}
+  <form class="management-filters store-filters" method="get">
+    <div><label for="q">Find an item</label><input id="q" name="q" value="{{ request.args.get('q', '') }}" placeholder="Name or description"></div>
+    <div><label for="min_price">Minimum price ($)</label><input id="min_price" name="min_price" type="number" min="0" step="1" value="{{ request.args.get('min_price', '') }}"></div>
+    <div><label for="max_price">Maximum price ($)</label><input id="max_price" name="max_price" type="number" min="0" step="1" value="{{ request.args.get('max_price', '') }}"></div>
+    <div><label for="sort">Sort by</label><select id="sort" name="sort"><option value="newest" {% if request.args.get('sort', 'newest') == 'newest' %}selected{% endif %}>Newest</option><option value="name" {% if request.args.get('sort') == 'name' %}selected{% endif %}>Name</option><option value="price_low" {% if request.args.get('sort') == 'price_low' %}selected{% endif %}>Price: low to high</option><option value="price_high" {% if request.args.get('sort') == 'price_high' %}selected{% endif %}>Price: high to low</option></select></div>
+    <div class="filter-actions"><button class="button button-primary button-small" type="submit">Filter items</button><a class="button button-quiet button-small" href="{{ url_for('store.catalog') }}">Clear</a></div>
+  </form>
+{% endif %}
 {% if products %}
   <div class="store-grid">
     {% for product in products %}
       <article class="product-card">
         <div class="product-visual"><span>ITEM {{ "%02d"|format(loop.index) }}</span><div class="product-symbol">✦</div></div>
         <div class="product-body">
-          <div class="card-heading"><h2>{{ product.name }}</h2><span class="price">{{ "%.2f"|format(product.price) }} cr</span></div>
+          <div class="card-heading"><h2>{{ product.name }}</h2><span class="price">{{ product.price|dollars }}</span></div>
           <p>{{ product.description or "A competition item available to registered teams." }}</p>
           <div class="product-meta">
             <span>{{ "Unlimited stock" if product.stock_count is none else product.stock_count ~ " in stock" }}</span>

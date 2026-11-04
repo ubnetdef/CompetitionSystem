@@ -89,4 +89,11 @@ CHECK_CATALOG = {
     },
 }
 
+CHECK_TYPE_PAYOUTS = {
+    key: definition["label"]
+    for key, definition in CHECK_CATALOG.items()
+    if definition["available"]
+}
+CHECK_TYPE_PAYOUTS["tcp"] = "TCP (legacy)"
+
 LEGACY_SERVICE_PROPERTIES = ("weight", "pointsBoost", "roundUnits", "roundDelay")

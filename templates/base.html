@@ -10,21 +10,18 @@
 <body class="{% block body_class %}{% endblock %}">
   <header class="topbar">
     <a class="brand" href="{{ site_links.engine }}" aria-label="UBNETDEF home">
-      <img class="brand-logo" src="{{ url_for('static', filename='ubnetdef-logo.svg') }}" alt="UBNETDEF">
+      <img class="brand-logo" src="{{ url_for('static', filename='ubnetdef-logo.png') }}" alt="">
+      <span class="brand-name">UBNETDEF</span>
     </a>
     <nav aria-label="Main navigation">
-      {% if not current_user.is_authenticated or current_user.role != 'banker' %}
-        <a href="{{ site_links.engine }}/scoreboard">Scoreboard</a>
-      {% endif %}
-      <a href="{{ site_links.bank }}/bank">Bank</a>
-      {% if not current_user.is_authenticated or current_user.role != 'banker' %}
-        <a href="{{ site_links.store }}/store">Store</a>
-      {% endif %}
+      <a href="{{ site_links.engine }}/scoreboard">Scoreboard</a>
+      {% if not current_user.is_authenticated or current_user.role != 'organizer' %}<a href="{{ site_links.bank }}/bank">Bank</a>{% endif %}
+      <a href="{{ site_links.store }}/store">Store</a>
       {% if current_user.is_authenticated and current_user.role in ['team', 'admin', 'organizer'] %}
         <a href="{{ url_for('main.team_checks') }}">{{ 'My checks' if current_user.role == 'team' else 'Team checks' }}</a>
       {% endif %}
       {% if current_user.is_authenticated and current_user.role in ['admin', 'organizer'] %}
-        <a href="{{ site_links.admin }}/admin">Admin</a>
+        <a href="{{ site_links.admin }}/admin">{{ 'Admin' if current_user.role == 'admin' else 'Competition Manager' }}</a>
       {% endif %}
     </nav>
     <div class="topbar-account">
@@ -53,7 +50,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">
-    <img class="footer-logo" src="{{ url_for('static', filename='ubnetdef-logo.svg') }}" alt="UBNETDEF">
+    <img class="footer-logo" src="{{ url_for('static', filename='ubnetdef-logo.png') }}" alt="UBNETDEF">
     <span>Scoring · Banking · Store</span>
   </footer>
 </body>

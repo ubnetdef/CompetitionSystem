@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading page-heading-row">
   <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Accounts and teams</h1><p>Create accounts for teams and staff. Removing a team account permanently removes its linked team, scoring, banking, store, host, and check data.</p></div>
-  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a>
+  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">{{ 'Back to admin' if current_user.role == 'admin' else 'Back to Competition Manager' }}</a>
 </section>
 <section class="split-layout">
   <form class="panel form-panel" method="post">
@@ -26,7 +26,7 @@
   <div class="panel info-panel"><p class="eyebrow">ROLE GUIDE</p><h2>Shared access</h2>
     <ul class="clean-list">
       <li><strong>Team</strong><span>One shared login per team for the scoreboard, bank account, and store.</span></li>
-      <li><strong>Bank operator</strong><span>View transaction activity and adjust simulated team credits.</span></li>
+      <li><strong>Bank operator</strong><span>Manage whole-dollar team balances and store activity.</span></li>
       <li><strong>Organizer</strong><span>Manage competitions, team accounts, and store fulfillment.</span></li>
       <li><strong>Admin</strong><span>Full access, including staff account management.</span></li>
     </ul>

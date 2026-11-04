@@ -35,7 +35,7 @@
   <label for="check_type">Check type</label>
   {% if editing_service %}
     <select id="check_type" disabled>
-      <option value="{{ editing_service.check_type }}" selected>{{ check_catalog.get(editing_service.check_type, {}).get("label", editing_service.check_type|upper ~ " (legacy)") }}</option>
+      <option value="{{ editing_service.check_type }}" selected>{{ check_catalog.get(editing_service.check_type, {}).get("label") if check_catalog.get(editing_service.check_type, {}).get("available", false) else "Legacy check" }}</option>
     </select>
     <input type="hidden" name="check_type" value="{{ editing_service.check_type }}">
   {% else %}
@@ -47,8 +47,6 @@
                 {% if request.endpoint == 'admin.competition_builder' and selected_host_group and key not in (selected_host_group.check_types or []) %}disabled{% endif %}>
           {{ definition.label }}
         </option>
-      {% else %}
-        <option value="{{ key }}" data-check-type="{{ key }}" data-supported="false" disabled>{{ definition.label }} — not supported yet</option>
       {% endif %}
     {% endfor %}
   </select>
@@ -157,13 +155,7 @@
     <div><label for="points_boost">Points Boost <span class="optional">(added on pass)</span></label><input id="points_boost" name="points_boost" type="number" min="0" max="10000" value="{{ editing_service.points_boost if editing_service else 0 }}" required></div>
     <div><label for="timeout_seconds">Timeout (seconds)</label><input id="timeout_seconds" name="timeout_seconds" type="number" min="1" max="30" value="{{ editing_service.timeout_seconds if editing_service else 3 }}" required></div>
   </div>
-  <label for="service_group_id">Service group <span class="optional">(optional)</span></label>
-  <select id="service_group_id" name="service_group_id">
-    <option value="">No group</option>
-    {% for group in service_groups %}
-      <option value="{{ group.id }}" {% if editing_service and editing_service.service_group_id == group.id %}selected{% endif %}>{{ group.display_name }}</option>
-    {% endfor %}
-  </select>
+  {% if editing_service and editing_service.service_group_id %}<input type="hidden" name="service_group_id" value="{{ editing_service.service_group_id }}">{% endif %}
   <input type="hidden" name="enabled" value="off">
   <label class="checkbox-label"><input type="checkbox" name="enabled" value="on" {% if not editing_service or editing_service.enabled %}checked{% endif %}> Enable this score check</label>
   <label class="checkbox-label"><input type="checkbox" name="paused" {% if editing_service and editing_service.paused %}checked{% endif %}> Pause scoring for this service (skip its checks and points)</label>

@@ -26,7 +26,7 @@
           {% for service in services %}
             <th class="score-check-heading" data-service-id="{{ service.id }}">
               <span>{{ service.host_group.name if service.host_group else "General" }}</span>
-              <small>{{ service.check_type|upper }}</small>
+              <small>{{ service.check_type|upper if service.check_type not in ["smb", "imap", "caldav"] else "Legacy check" }}</small>
             </th>
           {% endfor %}
         </tr></thead>

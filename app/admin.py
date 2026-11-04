@@ -71,7 +71,7 @@ def dashboard():
 
 
 @admin_bp.route("/management-controls", methods=["GET", "POST"])
-@roles_required("admin", "organizer")
+@roles_required("admin")
 def management_controls():
     settings = db.session.get(PlatformSetting, 1)
     if request.method == "POST":
@@ -335,7 +335,7 @@ def competitions():
         elif interval < 15 or interval > 3600:
             flash("Scoring interval must be between 15 and 3,600 seconds.", "error")
         elif payout is None:
-            flash("Payout per point must be a positive amount no greater than 1,000,000.00.", "error")
+            flash("Payout per point must be a whole-dollar amount from $1 to $1,000,000.", "error")
         else:
             competition = Competition(
                 name=name,
@@ -379,14 +379,14 @@ def archive_competition(competition_id):
         competition.next_round_at = None
         db.session.commit()
         flash(
-            f"Scoreboard '{competition.name}' archived. Restore it from Management Controls → Archived boards.",
+            f"Scoreboard '{competition.name}' archived. An administrator can restore it from Management Controls → Archived boards.",
             "success",
         )
     return redirect(url_for("admin.competitions"))
 
 
 @admin_bp.post("/competitions/<int:competition_id>/unarchive")
-@roles_required("admin", "organizer")
+@roles_required("admin")
 def unarchive_competition(competition_id):
     competition = db.session.get(Competition, competition_id)
     if competition is None:
@@ -845,7 +845,7 @@ def _save_competition_details(competition):
     elif not 15 <= interval <= 3600:
         flash("Scoring interval must be between 15 and 3,600 seconds.", "error")
     elif payout is None:
-        flash("Credits per point must be a positive amount no greater than 1,000,000.00.", "error")
+        flash("Dollars per point must be a whole-dollar amount from $1 to $1,000,000.", "error")
     else:
         competition.name = name
         competition.description = description
@@ -1126,11 +1126,6 @@ def competition_detail(competition_id):
         else Team.query.filter(Team.user.has()).order_by(Team.name).all()
     )
     rounds = ScoreRound.query.filter_by(competition_id=competition.id).order_by(ScoreRound.number.desc()).limit(20).all()
-    team_hosts = {
-        host.team_id: host
-        for host in competition.hosts
-        if host.host_group_id is None
-    }
     standings = (
         db.session.query(
             Team.name,
@@ -1149,21 +1144,59 @@ def competition_detail(competition_id):
     return render_template(
         "competition_detail.html",
         competition=competition,
-        teams=teams,
         available_teams=available_teams,
         rounds=rounds,
         standings=standings,
-        team_hosts=team_hosts,
         check_catalog=CHECK_CATALOG,
         team_credential_check_types=TEAM_CREDENTIAL_CHECK_TYPES,
         editing_service=editing_service,
-        service_groups=ServiceGroup.query.filter_by(
-            competition_id=competition.id
-        ).order_by(ServiceGroup.name).all(),
         host_groups=HostGroup.query.filter_by(
             competition_id=competition.id
         ).order_by(HostGroup.name).all(),
     )
+
+
+@admin_bp.get("/competitions/<int:competition_id>/rounds/live")
+@roles_required("admin", "organizer")
+def competition_rounds_live(competition_id):
+    competition = _get_visible_competition(competition_id)
+    if competition is None:
+        return jsonify(error="That competition does not exist or is archived."), 404
+
+    def as_utc_iso(value):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+
+    rounds = (
+        ScoreRound.query.filter_by(competition_id=competition.id)
+        .order_by(ScoreRound.number.desc())
+        .limit(20)
+        .all()
+    )
+    response = jsonify(
+        rounds=[
+            {
+                "number": score_round.number,
+                "status": score_round.status,
+                "started_at": as_utc_iso(score_round.started_at),
+                "completed_at": as_utc_iso(score_round.completed_at),
+                "detail": score_round.error_message
+                or (
+                    as_utc_iso(score_round.completed_at)
+                    if score_round.completed_at
+                    else "Scoring in progress"
+                    if score_round.status == "running"
+                    else score_round.status.capitalize()
+                ),
+            }
+            for score_round in rounds
+        ]
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _add_competition_team(competition):

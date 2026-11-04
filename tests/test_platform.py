@@ -4,12 +4,14 @@ import base64
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import requests
 from unittest.mock import patch
 
 from app import create_app
 from app.bank import balance_for
+from app.check_catalog import CHECK_TYPE_PAYOUTS
 from app.extensions import db
 from app.check_secrets import decrypt_credentials, encrypt_credentials
 from app.main import _recommended_score_check_action
@@ -34,7 +36,12 @@ from app.models import (
     User,
 )
 from app.scoring import _credentials, _probe, process_scoring_round
-from app.tasks import claim_next_round, run_scoring_round, schedule_due_rounds
+from app.tasks import (
+    claim_next_round,
+    recover_stale_rounds,
+    run_scoring_round,
+    schedule_due_rounds,
+)
 
 
 class PlatformTests(unittest.TestCase):
@@ -74,6 +81,22 @@ class PlatformTests(unittest.TestCase):
             "/login", data={"username": username, "password": password}
         )
 
+    def test_deployment_health_and_readiness_commands(self):
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"status": "ok"})
+
+        runner = self.app.test_cli_runner()
+        database_check = runner.invoke(args=["db-check"])
+        self.assertEqual(database_check.exit_code, 0, database_check.output)
+        admin_check = runner.invoke(args=["has-admin"])
+        self.assertEqual(admin_check.exit_code, 0, admin_check.output)
+
+        db.session.delete(self.admin)
+        db.session.commit()
+        missing_admin_check = runner.invoke(args=["has-admin"])
+        self.assertNotEqual(missing_admin_check.exit_code, 0)
+
     def test_shared_login_and_team_bank_api(self):
         response = self.login("blue", "a-long-test-password")
         self.assertEqual(response.status_code, 302)
@@ -82,7 +105,8 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(response.json["team"]["name"], "Blue Team")
         response = self.client.get("/api/v1/me/bank")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json["balance"], "0.00")
+        self.assertEqual(response.json["balance"], "0")
+        self.assertEqual(response.json["currency"], "USD")
 
     def test_account_directory_never_exposes_password_hashes(self):
         self.login("admin", "another-long-test-password")
@@ -236,7 +260,7 @@ class PlatformTests(unittest.TestCase):
         response = self.client.get("/login")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"static/ubnetdef-logo.svg", response.data)
+        self.assertIn(b"static/ubnetdef-logo.png", response.data)
         self.assertIn(b"Team tools", response.data)
         self.assertNotIn(b"YOUR TEAM WORKSPACE", response.data)
         self.assertNotIn(b"One login", response.data)
@@ -331,14 +355,465 @@ class PlatformTests(unittest.TestCase):
             data={
                 "team_id": self.team.id,
                 "kind": "credit",
-                "amount": "25.50",
+                "amount": "25",
                 "description": "Competition award",
             },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(balance_for(self.team.id), Decimal("25.50"))
+        self.assertEqual(balance_for(self.team.id), Decimal("25"))
         entry = BankTransaction.query.one()
         self.assertEqual(entry.created_by_id, self.admin.id)
+
+    def test_bank_rejects_fractional_dollar_adjustments(self):
+        self.login("admin", "another-long-test-password")
+        response = self.client.post(
+            "/bank/adjust",
+            data={
+                "team_id": self.team.id,
+                "kind": "credit",
+                "amount": "25.50",
+                "description": "Fractional amount should fail",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn(b"whole-dollar amount", response.data)
+        self.assertEqual(BankTransaction.query.count(), 0)
+
+    def test_banker_can_configure_whole_dollar_check_type_rewards(self):
+        banker = User(username="payout-banker", role="banker")
+        banker.set_password("banker-long-test-password")
+        db.session.add(banker)
+        db.session.commit()
+        self.login("payout-banker", "banker-long-test-password")
+
+        payload = {
+            f"reward_{check_type}": "0"
+            for check_type in CHECK_TYPE_PAYOUTS
+        }
+        payload["reward_http"] = "25"
+        response = self.client.post("/bank/check-payouts", data=payload)
+
+        self.assertEqual(response.status_code, 302)
+        settings = db.session.get(PlatformSetting, 1)
+        self.assertEqual(settings.check_type_payouts["http"], 25)
+        self.assertEqual(
+            set(settings.check_type_payouts),
+            set(CHECK_TYPE_PAYOUTS),
+        )
+
+        payload["reward_http"] = "25.50"
+        response = self.client.post(
+            "/bank/check-payouts",
+            data=payload,
+            follow_redirects=True,
+        )
+        self.assertIn(b"whole-dollar amount", response.data)
+        db.session.refresh(settings)
+        self.assertEqual(settings.check_type_payouts["http"], 25)
+
+    def test_store_rejects_fractional_prices(self):
+        self.login("admin", "another-long-test-password")
+        response = self.client.post(
+            "/store/manage/products",
+            data={
+                "name": "Fractional-price item",
+                "price": "5.50",
+                "description": "",
+                "stock_count": "",
+                "max_per_team": "",
+                "available_until": "",
+                "questions": "",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"whole-dollar amount", response.data)
+        self.assertEqual(Product.query.count(), 0)
+
+    def test_store_catalog_filters_are_staff_only(self):
+        db.session.add_all(
+            [
+                Product(name="Alpha item", price=Decimal("5"), published=True),
+                Product(name="Beta item", price=Decimal("20"), published=True),
+            ]
+        )
+        db.session.commit()
+        filtered_url = "/store/?q=missing&min_price=100&sort=name"
+
+        public_response = self.client.get(filtered_url)
+        self.assertEqual(public_response.status_code, 200)
+        self.assertNotIn(b"Find an item", public_response.data)
+        self.assertIn(b"Alpha item", public_response.data)
+        self.assertIn(b"Beta item", public_response.data)
+
+        self.login("blue", "a-long-test-password")
+        team_response = self.client.get(filtered_url)
+        self.assertEqual(team_response.status_code, 200)
+        self.assertNotIn(b"Find an item", team_response.data)
+        self.assertIn(b"Alpha item", team_response.data)
+        self.assertIn(b"Beta item", team_response.data)
+
+        self.client.post("/logout")
+        self.login("admin", "another-long-test-password")
+        staff_response = self.client.get("/store/?q=Alpha")
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertIn(b"Find an item", staff_response.data)
+        self.assertIn(b"Alpha item", staff_response.data)
+        self.assertNotIn(b"Beta item", staff_response.data)
+
+        for role in ("organizer", "banker"):
+            staff_user = User(
+                username=f"store-{role}",
+                role=role,
+            )
+            staff_user.set_password("store-staff-test-password")
+            db.session.add(staff_user)
+            db.session.commit()
+            self.client.post("/logout")
+            self.login(staff_user.username, "store-staff-test-password")
+            response = self.client.get("/store/?q=Alpha")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"Find an item", response.data)
+
+    def test_bank_api_and_team_pages_use_whole_us_dollars(self):
+        db.session.add(
+            BankTransaction(
+                team=self.team,
+                kind="credit",
+                amount=Decimal("125"),
+                description="Initial dollar balance",
+            )
+        )
+        db.session.add(
+            Product(
+                name="Dollar item",
+                price=Decimal("5"),
+                published=True,
+            )
+        )
+        db.session.commit()
+        self.login("blue", "a-long-test-password")
+
+        bank_response = self.client.get("/api/v1/me/bank")
+        self.assertEqual(bank_response.json["balance"], "125")
+        self.assertEqual(bank_response.json["currency"], "USD")
+        account_response = self.client.get("/bank/account")
+        self.assertIn(b"$125", account_response.data)
+        self.assertNotIn(b"credits", account_response.data.lower())
+        self.assertNotIn(b">Credit<", account_response.data)
+        store_response = self.client.get("/store/")
+        self.assertIn(b"$5", store_response.data)
+        self.assertNotIn(b"credits", store_response.data.lower())
+
+    def test_bank_and_store_permissions_follow_staff_roles(self):
+        banker = User(username="banker", role="banker")
+        banker.set_password("banker-long-test-password")
+        organizer = User(username="organizer", role="organizer")
+        organizer.set_password("organizer-long-test-password")
+        db.session.add_all([banker, organizer])
+        db.session.commit()
+
+        self.login("banker", "banker-long-test-password")
+        bank_page = self.client.get("/bank/")
+        self.assertEqual(bank_page.status_code, 200)
+        self.assertIn(b"Scoreboard", bank_page.data)
+        self.assertLess(
+            bank_page.data.index(b"FUND CONTROLS"),
+            bank_page.data.index(b"TEAM ACCOUNTS"),
+        )
+        self.assertEqual(self.client.get("/scoreboard").status_code, 200)
+        self.assertEqual(self.client.get("/store/manage/products").status_code, 200)
+        self.assertEqual(self.client.get("/store/manage/orders").status_code, 200)
+        self.assertEqual(self.client.get("/admin/competitions").status_code, 403)
+        self.client.post("/logout")
+
+        self.login("organizer", "organizer-long-test-password")
+        self.assertEqual(self.client.get("/bank/").status_code, 403)
+        self.assertEqual(self.client.get("/store/manage/products").status_code, 200)
+        self.assertEqual(self.client.get("/store/manage/orders").status_code, 200)
+        self.assertEqual(self.client.get("/admin/competitions").status_code, 200)
+        self.assertEqual(self.client.get("/admin/management-controls").status_code, 403)
+        self.assertEqual(
+            self.client.post("/admin/competitions/1/unarchive").status_code,
+            403,
+        )
+        dashboard = self.client.get("/admin/")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Competition Manager", dashboard.data)
+        self.assertNotIn(b">Admin</a>", dashboard.data)
+        self.assertNotIn(b"Management controls", dashboard.data)
+        competitions_page = self.client.get("/admin/competitions")
+        users_page = self.client.get("/admin/users")
+        self.assertIn(b"Back to Competition Manager", competitions_page.data)
+        self.assertIn(b"Back to Competition Manager", users_page.data)
+        self.assertNotIn(b"Back to admin", competitions_page.data)
+        self.assertNotIn(b"Back to admin", users_page.data)
+        self.client.post("/logout")
+
+        self.login("admin", "another-long-test-password")
+        admin_dashboard = self.client.get("/admin/")
+        self.assertIn(b">Admin</a>", admin_dashboard.data)
+        self.assertIn(b"Management controls", admin_dashboard.data)
+        self.assertIn(
+            b"Back to admin",
+            self.client.get("/admin/competitions").data,
+        )
+
+    def test_bank_audit_ledger_loads_only_after_transaction_filters(self):
+        transaction = BankTransaction(
+            team=self.team,
+            kind="credit",
+            amount=Decimal("25"),
+            description="Filtered audit transaction",
+        )
+        banker = User(username="ledger-banker", role="banker")
+        banker.set_password("banker-long-test-password")
+        db.session.add_all([transaction, banker])
+        db.session.commit()
+        self.login("ledger-banker", "banker-long-test-password")
+
+        with patch("app.bank._apply_transaction_filters") as apply_filters:
+            response = self.client.get("/bank/")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(
+                b"Apply filters to load audit ledger transactions",
+                response.data,
+            )
+            self.assertNotIn(b"Filtered audit transaction", response.data)
+            apply_filters.assert_not_called()
+
+            account_filtered = self.client.get("/bank/?account_q=Blue")
+            self.assertEqual(account_filtered.status_code, 200)
+            apply_filters.assert_not_called()
+
+        filtered_response = self.client.get("/bank/?kind=credit")
+        self.assertIn(b"Filtered audit transaction", filtered_response.data)
+
+        invalid_filter_response = self.client.get("/bank/?kind=invalid")
+        self.assertNotIn(b"Filtered audit transaction", invalid_filter_response.data)
+
+    def test_bulk_fund_actions_all_teams_preserve_ledger_history(self):
+        other_team = Team(name="Red Team")
+        other_user = User(username="red", role="team", team=other_team)
+        other_user.set_password("a-long-test-password")
+        db.session.add_all(
+            [
+                other_team,
+                other_user,
+                BankTransaction(
+                    team=self.team,
+                    kind="credit",
+                    amount=Decimal("25.00"),
+                    description="Initial Blue funds",
+                ),
+                BankTransaction(
+                    team=other_team,
+                    kind="credit",
+                    amount=Decimal("45.00"),
+                    description="Initial Red funds",
+                ),
+            ]
+        )
+        db.session.commit()
+        banker = User(username="banker", role="banker")
+        banker.set_password("banker-long-test-password")
+        db.session.add(banker)
+        db.session.commit()
+        self.login("banker", "banker-long-test-password")
+
+        response = self.client.post(
+            "/bank/adjust",
+            data={
+                "action": "set",
+                "all_teams": "on",
+                "amount": "100.00",
+                "description": "Opening balance",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(balance_for(self.team.id), Decimal("100.00"))
+        self.assertEqual(balance_for(other_team.id), Decimal("100.00"))
+        self.assertEqual(BankTransaction.query.count(), 4)
+
+        response = self.client.post(
+            "/bank/adjust",
+            data={
+                "action": "reset",
+                "all_teams": "on",
+                "description": "Competition reset",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(balance_for(self.team.id), Decimal("0.00"))
+        self.assertEqual(balance_for(other_team.id), Decimal("0.00"))
+        self.assertEqual(BankTransaction.query.count(), 6)
+        self.assertTrue(
+            all(
+                transaction.created_by_id == banker.id
+                for transaction in BankTransaction.query.filter(
+                    BankTransaction.description.like("All teams - %")
+                )
+            )
+        )
+
+    def test_bulk_debit_is_atomic_when_a_team_has_insufficient_funds(self):
+        other_team = Team(name="Red Team")
+        other_user = User(username="red", role="team", team=other_team)
+        other_user.set_password("a-long-test-password")
+        db.session.add_all(
+            [
+                other_team,
+                other_user,
+                BankTransaction(
+                    team=self.team,
+                    kind="credit",
+                    amount=Decimal("10.00"),
+                    description="Initial Blue funds",
+                ),
+                BankTransaction(
+                    team=other_team,
+                    kind="credit",
+                    amount=Decimal("5.00"),
+                    description="Initial Red funds",
+                ),
+            ]
+        )
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.post(
+            "/bank/adjust",
+            data={
+                "action": "debit",
+                "all_teams": "on",
+                "amount": "8.00",
+                "description": "All-team purchase",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"No accounts were changed.", response.data)
+        self.assertEqual(balance_for(self.team.id), Decimal("10.00"))
+        self.assertEqual(balance_for(other_team.id), Decimal("5.00"))
+        self.assertEqual(BankTransaction.query.count(), 2)
+
+    def test_bank_filters_and_transaction_detail_are_team_scoped(self):
+        product = Product(
+            name="Competition Shirt",
+            price=Decimal("5.00"),
+            published=True,
+        )
+        order = Order(
+            team=self.team,
+            product=product,
+            quantity=1,
+            unit_price=Decimal("5.00"),
+            status="pending",
+        )
+        question = ProductQuestion(product=product, text="Preferred size")
+        order.answers.append(
+            OrderAnswer(
+                question=question,
+                answer="Medium",
+            )
+        )
+        db.session.add(order)
+        db.session.flush()
+        transaction = BankTransaction(
+            team=self.team,
+            created_by=self.team_user,
+            order_id=order.id,
+            kind="debit",
+            amount=Decimal("5.00"),
+            description="Store purchase: Competition Shirt",
+        )
+        db.session.add(transaction)
+        db.session.commit()
+
+        self.login("admin", "another-long-test-password")
+        response = self.client.get(
+            "/bank/?account_q=Blue&min_balance=0&q=Competition&kind=debit"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Competition Shirt", response.data)
+        self.assertIn(f"/bank/transactions/{transaction.id}".encode(), response.data)
+
+        self.client.post("/logout")
+        self.login("blue", "a-long-test-password")
+        response = self.client.get(f"/bank/transactions/{transaction.id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"RELATED STORE ORDER", response.data)
+        self.assertIn(b"Preferred size", response.data)
+        self.assertIn(b"Medium", response.data)
+
+        other_team = Team(name="Red Team")
+        other_user = User(username="red", role="team", team=other_team)
+        other_user.set_password("a-long-test-password")
+        db.session.add_all([other_team, other_user])
+        db.session.commit()
+        self.client.post("/logout")
+        self.login("red", "a-long-test-password")
+        self.assertEqual(
+            self.client.get(f"/bank/transactions/{transaction.id}").status_code,
+            404,
+        )
+
+    def test_store_filters_apply_to_catalog_items_and_orders(self):
+        shirt = Product(
+            name="Competition Shirt",
+            description="Team apparel",
+            price=Decimal("5.00"),
+            published=True,
+        )
+        mug = Product(
+            name="Competition Mug",
+            price=Decimal("25.00"),
+            published=True,
+        )
+        hidden = Product(
+            name="Hidden Shirt",
+            price=Decimal("4.00"),
+            published=False,
+        )
+        order = Order(
+            team=self.team,
+            product=shirt,
+            quantity=1,
+            unit_price=Decimal("5.00"),
+            status="pending",
+        )
+        db.session.add_all([shirt, mug, hidden, order])
+        db.session.commit()
+
+        self.login("blue", "a-long-test-password")
+        response = self.client.get("/store/?q=Shirt&max_price=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"Find an item", response.data)
+        self.assertIn(b"Competition Shirt", response.data)
+        self.assertIn(b"Competition Mug", response.data)
+        self.assertNotIn(b"Hidden Shirt", response.data)
+        response = self.client.get("/store/orders?status=pending&q=Shirt")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Competition Shirt", response.data)
+
+        self.client.post("/logout")
+        self.login("admin", "another-long-test-password")
+        response = self.client.get("/store/?q=Shirt&max_price=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Find an item", response.data)
+        self.assertIn(b"Competition Shirt", response.data)
+        self.assertNotIn(b"Competition Mug", response.data)
+        self.assertNotIn(b"Hidden Shirt", response.data)
+        response = self.client.get(
+            "/store/manage/products?q=Shirt&visibility=published&max_price=10"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Competition Shirt", response.data)
+        self.assertNotIn(b"Hidden Shirt", response.data)
+        response = self.client.get(
+            f"/store/manage/orders?status=pending&team_id={self.team.id}&product_id={shirt.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Competition Shirt", response.data)
 
     def test_store_purchase_debits_balance_and_reserves_stock(self):
         db.session.add(
@@ -1311,7 +1786,7 @@ class PlatformTests(unittest.TestCase):
                     response.data,
                 )
 
-    def test_competition_check_form_shows_supported_and_legacy_catalog(self):
+    def test_competition_check_form_hides_unsupported_check_types(self):
         competition = Competition(name="Check Catalog")
         db.session.add(competition)
         db.session.commit()
@@ -1323,6 +1798,109 @@ class PlatformTests(unittest.TestCase):
         self.assertIn(b"SSH authentication", response.data)
         self.assertIn(b"WinRM HTTPS authentication", response.data)
         self.assertNotIn(b'value="tcp"', response.data)
+        for label in (b"SMB", b"IMAP", b"CalDav", b"LEGACY CHECK CATALOG"):
+            self.assertNotIn(label, response.data)
+
+        builder_response = self.client.get(
+            f"/admin/competitions/{competition.id}/builder?step=groups"
+        )
+        self.assertEqual(builder_response.status_code, 200)
+        for label in (b"SMB", b"IMAP", b"CalDav", b"not supported yet"):
+            self.assertNotIn(label, builder_response.data)
+
+    def test_competition_detail_removes_redundant_controls_and_reorders_standings(self):
+        competition = Competition(name="Clean Competition")
+        host_group = HostGroup(competition=competition, name="Linux")
+        service_group = ServiceGroup(
+            competition=competition,
+            name="hidden-group",
+            display_name="Hidden Service Group",
+        )
+        service = Service(
+            competition=competition,
+            host_group=host_group,
+            service_group=service_group,
+            name="Web health",
+            check_type="http",
+            check_config={"scheme": "http"},
+            protocol="http",
+            port=80,
+            path="/",
+        )
+        competition.teams.append(self.team)
+        db.session.add_all([competition, host_group, service_group, service])
+        db.session.flush()
+        db.session.add(
+            Host(
+                competition=competition,
+                team=self.team,
+                host_group=host_group,
+                address="10.1.1.20",
+            )
+        )
+        additional_team = Team(name="Red Team")
+        additional_user = User(username="red", role="team", team=additional_team)
+        additional_user.set_password("another-long-test-password")
+        db.session.add_all([additional_team, additional_user])
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.get(
+            f"/admin/competitions/{competition.id}?edit_service={service.id}"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"SERVICE ORGANIZATION", response.data)
+        self.assertNotIn(b"Service groups", response.data)
+        self.assertNotIn(b"Hidden Service Group", response.data)
+        self.assertNotIn(b"Scoring host</th>", response.data)
+        self.assertNotIn(b"Update host", response.data)
+        self.assertNotIn(b"COMPETITION TEAMS", response.data)
+        self.assertNotIn(b'id="address"', response.data)
+        self.assertIn(
+            f'name="service_group_id" value="{service_group.id}"'.encode(),
+            response.data,
+        )
+        self.assertLess(
+            response.data.index(b"COMPETITOR SETUP"),
+            response.data.index(b"LIVE STANDINGS"),
+        )
+        self.assertLess(
+            response.data.index(b"LIVE STANDINGS"),
+            response.data.index(b"SCORING CONFIGURATION"),
+        )
+        self.assertLess(
+            response.data.index(b"LIVE STANDINGS"),
+            response.data.index(b"SERVICE CHECKS"),
+        )
+        self.assertIn(b"Duration", response.data)
+        self.assertIn(b"competition-rounds-live.js", response.data)
+
+    def test_admin_can_fetch_live_scoring_round_history(self):
+        competition = Competition(name="Live Round History")
+        score_round = ScoreRound(
+            competition=competition,
+            number=4,
+            status="running",
+            started_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        )
+        db.session.add_all([competition, score_round])
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.get(
+            f"/admin/competitions/{competition.id}/rounds/live"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(response.json["rounds"][0]["number"], 4)
+        self.assertEqual(response.json["rounds"][0]["status"], "running")
+        self.assertEqual(
+            response.json["rounds"][0]["started_at"],
+            "2026-01-02T03:04:05+00:00",
+        )
+        self.assertEqual(
+            response.json["rounds"][0]["detail"], "Scoring in progress"
+        )
 
     def test_admin_adds_winrm_authentication_without_storing_command(self):
         competition = Competition(name="Safe Checks")
@@ -2073,6 +2651,98 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(result.points, 5)
         self.assertEqual(balance_for(self.team.id), Decimal("50.00"))
 
+    def test_scoring_rewards_passing_checks_additively_and_resolves_legacy_tcp(self):
+        competition = Competition(
+            name="Uptime Reward Cup",
+            status="active",
+            payout_per_point=Decimal("10.00"),
+        )
+        competition.teams.append(self.team)
+        db.session.add(competition)
+        db.session.flush()
+        db.session.add(
+            Host(
+                competition_id=competition.id,
+                team_id=self.team.id,
+                address="127.0.0.1",
+            )
+        )
+        http_service = Service(
+            competition_id=competition.id,
+            name="HTTP check",
+            check_type="http",
+            protocol="http",
+            port=80,
+            points=2,
+        )
+        failed_service = Service(
+            competition_id=competition.id,
+            name="Failed DNS check",
+            check_type="dns",
+            protocol="dns",
+            port=53,
+            points=5,
+        )
+        legacy_tcp_service = Service(
+            competition_id=competition.id,
+            name="Legacy TCP check",
+            protocol="tcp",
+            port=443,
+            points=0,
+        )
+        score_round = ScoreRound(
+            competition_id=competition.id,
+            number=1,
+            status="queued",
+        )
+        db.session.add_all(
+            [
+                http_service,
+                failed_service,
+                legacy_tcp_service,
+                score_round,
+                PlatformSetting(
+                    id=1,
+                    check_type_payouts={"http": 5, "dns": 11, "tcp": 13},
+                ),
+            ]
+        )
+        db.session.commit()
+
+        with patch(
+            "app.scoring._probe",
+            side_effect=lambda job: (
+                job["check_type"] != "dns",
+                "Check passed." if job["check_type"] != "dns" else "Check failed.",
+                2,
+            ),
+        ):
+            process_scoring_round(score_round.id, self.app)
+
+        db.session.expire_all()
+        results = {
+            result.service_id: result
+            for result in ScoreResult.query.filter_by(round_id=score_round.id).all()
+        }
+        self.assertTrue(results[http_service.id].passed)
+        self.assertEqual(results[http_service.id].points, 2)
+        self.assertFalse(results[failed_service.id].passed)
+        self.assertTrue(results[legacy_tcp_service.id].passed)
+
+        transactions = {
+            transaction.score_result_id: transaction
+            for transaction in BankTransaction.query.all()
+        }
+        self.assertEqual(len(transactions), 2)
+        http_transaction = transactions[results[http_service.id].id]
+        tcp_transaction = transactions[results[legacy_tcp_service.id].id]
+        self.assertEqual(http_transaction.amount, Decimal("25.00"))
+        self.assertEqual(tcp_transaction.amount, Decimal("13.00"))
+        self.assertNotIn(results[failed_service.id].id, transactions)
+        self.assertIn("$5 HTTP / HTTPS uptime reward", http_transaction.description)
+        self.assertIn("$13 TCP (legacy) uptime reward", tcp_transaction.description)
+        self.assertEqual(balance_for(self.team.id), Decimal("38.00"))
+
     def test_database_scoring_queue_schedules_and_claims_round_once(self):
         competition = Competition(
             name="Database Queue Cup",
@@ -2097,6 +2767,72 @@ class PlatformTests(unittest.TestCase):
         with patch("app.tasks.process_scoring_round") as process:
             run_scoring_round(claimed_id, self.app)
         process.assert_called_once_with(claimed_id, self.app, claimed=True)
+
+    def test_scoring_queue_does_not_schedule_while_a_round_is_pending(self):
+        competition = Competition(
+            name="Single Flight Cup",
+            status="active",
+        )
+        db.session.add(competition)
+        db.session.commit()
+
+        self.assertEqual(schedule_due_rounds(self.app), 1)
+        competition.next_round_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.session.commit()
+
+        self.assertEqual(schedule_due_rounds(self.app), 0)
+        self.assertEqual(ScoreRound.query.filter_by(competition_id=competition.id).count(), 1)
+
+    def test_round_claiming_allows_only_one_running_round_per_competition(self):
+        competition = Competition(name="Claim Lock Cup", status="active")
+        db.session.add(competition)
+        db.session.flush()
+        rounds = [
+            ScoreRound(competition=competition, number=number, status="queued")
+            for number in (1, 2)
+        ]
+        db.session.add_all(rounds)
+        db.session.commit()
+
+        first_claim = claim_next_round(self.app)
+        self.assertEqual(first_claim, rounds[0].id)
+        self.assertIsNone(claim_next_round(self.app))
+        self.assertEqual(
+            ScoreRound.query.filter_by(
+                competition_id=competition.id,
+                status="running",
+            ).count(),
+            1,
+        )
+
+    def test_abandoned_running_rounds_are_marked_failed(self):
+        competition = Competition(name="Recover Stale Cup", status="active")
+        db.session.add(competition)
+        db.session.flush()
+        now = datetime.now(timezone.utc)
+        stale_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="running",
+            started_at=now - timedelta(minutes=5),
+        )
+        active_round = ScoreRound(
+            competition=competition,
+            number=2,
+            status="running",
+            started_at=now,
+            heartbeat_at=now,
+        )
+        db.session.add_all([stale_round, active_round])
+        db.session.commit()
+
+        self.assertEqual(recover_stale_rounds(self.app, stale_after_seconds=90), 1)
+        db.session.refresh(stale_round)
+        db.session.refresh(active_round)
+        self.assertEqual(stale_round.status, "failed")
+        self.assertIsNotNone(stale_round.completed_at)
+        self.assertIn("stopped reporting progress", stale_round.error_message)
+        self.assertEqual(active_round.status, "running")
 
     def test_scoring_boost_and_hidden_service_still_award_points(self):
         competition = Competition(

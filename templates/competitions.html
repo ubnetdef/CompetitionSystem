@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading page-heading-row">
   <div><p class="eyebrow">SCORING ENGINE</p><h1>Scoreboards</h1><p>Create and manage scoreboards with guided setup for IP templates, device groups, team hosts, and score checks.</p></div>
-  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a>
+  <a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">{{ 'Back to admin' if current_user.role == 'admin' else 'Back to Competition Manager' }}</a>
 </section>
 <section class="split-layout">
   <div class="builder-tabs builder-tabs-start" aria-label="Scoreboard setup steps">
@@ -22,7 +22,7 @@
     <label for="description">Description <span class="optional">(optional)</span></label><textarea id="description" name="description" rows="3" maxlength="2000"></textarea>
     <div class="form-row">
       <div><label for="interval_seconds">Round interval (seconds)</label><input id="interval_seconds" name="interval_seconds" type="number" min="15" max="3600" value="60" required></div>
-      <div><label for="payout_per_point">Credits per point</label><input id="payout_per_point" name="payout_per_point" type="number" min="0.01" step="0.01" value="{{ '%.2f'|format(config['DEFAULT_PAYOUT_PER_POINT']) }}" required></div>
+      <div><label for="payout_per_point">Dollars per point</label><input id="payout_per_point" name="payout_per_point" type="number" min="1" max="1000000" step="1" value="{{ '%.0f'|format(config['DEFAULT_PAYOUT_PER_POINT']) }}" required></div>
     </div>
     <button class="button button-primary" type="submit">Create scoreboard and continue</button>
   </form>

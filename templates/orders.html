@@ -4,6 +4,17 @@
 <section class="page-heading page-heading-row"><div><p class="eyebrow">{{ "FULFILLMENT" if is_admin else "TEAM STORE" }}</p><h1>{{ "Order management" if is_admin else "My orders" }}</h1><p>{{ "Review team requests, mark fulfilled orders, or issue refunds." if is_admin else "Track the items your team has requested." }}</p></div>
   {% if is_admin %}<div class="heading-actions"><a class="button button-secondary" href="{{ url_for('store.manage_products') }}">Manage items</a><a class="button button-secondary" href="{{ url_for('store.catalog') }}">Storefront</a></div>{% else %}<a class="button button-secondary" href="{{ url_for('store.catalog') }}">Back to store</a>{% endif %}
 </section>
+<form class="management-filters" method="get">
+  <div><label for="q">Search</label><input id="q" name="q" value="{{ request.args.get('q', '') }}" placeholder="{{ 'Order, team, or item' if is_admin else 'Item name' }}"></div>
+  <div><label for="status">Status</label><select id="status" name="status"><option value="">All statuses</option><option value="pending" {% if request.args.get('status') == 'pending' %}selected{% endif %}>Pending</option><option value="completed" {% if request.args.get('status') == 'completed' %}selected{% endif %}>Completed</option><option value="refunded" {% if request.args.get('status') == 'refunded' %}selected{% endif %}>Refunded</option></select></div>
+  {% if is_admin %}
+    <div><label for="team_id">Team</label><select id="team_id" name="team_id"><option value="">All teams</option>{% for team in teams %}<option value="{{ team.id }}" {% if request.args.get('team_id') == team.id|string %}selected{% endif %}>{{ team.name }}</option>{% endfor %}</select></div>
+    <div><label for="product_id">Item</label><select id="product_id" name="product_id"><option value="">All items</option>{% for product in products %}<option value="{{ product.id }}" {% if request.args.get('product_id') == product.id|string %}selected{% endif %}>{{ product.name }}</option>{% endfor %}</select></div>
+  {% endif %}
+  <div><label for="start_date">From</label><input id="start_date" name="start_date" type="date" value="{{ request.args.get('start_date', '') }}"></div>
+  <div><label for="end_date">To</label><input id="end_date" name="end_date" type="date" value="{{ request.args.get('end_date', '') }}"></div>
+  <div class="filter-actions"><button class="button button-primary button-small" type="submit">Filter orders</button><a class="button button-quiet button-small" href="{{ url_for('store.manage_orders') if is_admin else url_for('store.orders') }}">Clear</a></div>
+</form>
 <div class="table-wrap"><table><thead><tr><th>Order</th>{% if is_admin %}<th>Team</th>{% endif %}<th>Item</th><th>Answers</th><th>Date</th><th>Status</th><th class="number">Total</th>{% if is_admin %}<th>Actions</th>{% endif %}</tr></thead><tbody>
   {% for order in orders %}
     <tr>
@@ -11,12 +22,12 @@
       {% if is_admin %}<td>{{ order.team.name }}</td>{% endif %}
       <td>{{ order.product.name }}</td>
       <td>{% for answer in order.answers %}<span class="answer-line"><strong>{{ answer.question.text }}:</strong> {{ answer.answer }}</span>{% else %}—{% endfor %}</td>
-      <td>{{ order.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td><span class="pill pill-{{ order.status }}">{{ order.status }}</span></td><td class="number">{{ "%.2f"|format(order.total) }} cr</td>
+      <td>{{ order.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td><td><span class="pill pill-{{ order.status }}">{{ order.status }}</span></td><td class="number">{{ order.total|dollars }}</td>
       {% if is_admin %}<td><div class="action-stack">
-        {% if order.status == 'pending' %}<form method="post" action="{{ url_for('store.complete_order', order_id=order.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small">Complete</button></form>{% endif %}
-        {% if order.status != 'refunded' %}<form method="post" action="{{ url_for('store.refund_order', order_id=order.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small">Refund</button></form>{% endif %}
+        {% if order.status == 'pending' %}<form method="post" action="{{ url_for('store.complete_order', order_id=order.id, **request.args.to_dict()) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary button-small" type="submit">Complete</button></form>{% endif %}
+        {% if order.status != 'refunded' %}<form method="post" action="{{ url_for('store.refund_order', order_id=order.id, **request.args.to_dict()) }}" onsubmit="return confirm('Refund this order and restore its reserved stock?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet button-small" type="submit">Refund</button></form>{% endif %}
       </div></td>{% endif %}
     </tr>
-  {% else %}<tr><td colspan="{{ 8 if is_admin else 6 }}" class="table-empty">No orders to show.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="{{ 8 if is_admin else 6 }}" class="table-empty">No orders match these filters.</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}

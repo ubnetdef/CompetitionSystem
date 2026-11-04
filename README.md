@@ -5,7 +5,7 @@ An integrated rebuild of the ScoreTrak engine, simulated banking, and competitio
 ## Current platform shape
 
 - **Flask/Python application:** one web app, rendered with server-side templates, separated into Engine, Bank, Store, and Admin areas.
-- **Shared team login:** one organizer-created account per team, shared across the sites. The initial roles are administrator, competition organizer, bank operator, and team.
+- **Shared team login:** one organizer-created account per team, shared across the sites. Administrators have full access; organizers manage competitions and the store; bank operators manage the bank and store; team accounts access their own bank and store activity.
 - **PostgreSQL:** persistent application and transaction data. New installs start empty.
 - **PostgreSQL-backed scoring queue:** competition schedules and queued rounds are stored in the application database; Redis and a separate message broker are not used.
 - **Containerized scoring workers:** workers poll PostgreSQL for due competitions and queued rounds. Database row locks prevent multiple workers from claiming the same round, and worker containers can be scaled with Docker Compose. Each worker processes one round at a time and runs up to `SCORING_THREADS` service probes concurrently. Supported checks include HTTP/HTTPS, DNS, ICMP PING, SSH and WinRM authentication, LDAPS search, MySQL health, and read-only FTPS. Credentials are encrypted at rest with a dedicated `CHECK_CREDENTIAL_KEY`.
@@ -16,7 +16,7 @@ Scoring workers are managed as Docker Compose services, not dynamically created 
 
 ## Safe preview on a clean Ubuntu VM
 
-The setup script targets **Ubuntu Server 24.04** and checks for Docker, Docker Compose v2, and OpenSSL. It installs only missing host prerequisites. It does not install Python or application packages on the VM; those are built into the application container.
+The setup script targets **Ubuntu Server 24.04** and checks for Docker, Docker Compose v2, and OpenSSL. It installs only missing host prerequisites, starts and verifies the Docker daemon, secures `.env` with mode `600`, validates the credential-encryption key and Compose configuration, and checks web, database, and scoring-worker readiness after startup. It does not install Python or application packages on the VM; those are built into the application container.
 
 1. Clone this repository to the VM.
 2. Run:
@@ -34,9 +34,9 @@ The setup script targets **Ubuntu Server 24.04** and checks for Docker, Docker C
 
    Then open `http://127.0.0.1:8080`.
 
-The default preview deliberately avoids public ports 80/443 so it can be evaluated on the same VM without displacing the current system. `.env` contains database, signing, and check-credential encryption secrets; keep it private and back it up securely.
+The default preview deliberately avoids public ports 80/443 so it can be evaluated on the same VM without displacing the current system. `.env` contains database, signing, and check-credential encryption secrets; keep it private and back it up securely. The installer refuses to start if the credential-encryption key is not exactly 64 hexadecimal characters or if Docker Compose cannot resolve its required settings.
 
-To migrate an existing installation, securely copy its `.env` and database backup to the VM first. Run `sudo env DATABASE_IMPORT_ONLY=true bash scripts/setup.sh` to install prerequisites and start PostgreSQL without starting the web app or scoring worker. Restore the database, then run `sudo bash scripts/setup.sh`; the existing administrator account will be detected and preserved.
+To migrate an existing installation, securely copy its `.env` and database backup to the VM first. Run `sudo env DATABASE_IMPORT_ONLY=true bash scripts/setup.sh` to install prerequisites, stop the web app and scoring worker, and start PostgreSQL for the import. Restore the database, then run `sudo bash scripts/setup.sh`; the existing administrator account will be detected and preserved.
 
 ### Import the local competition database to a VM
 
@@ -78,8 +78,10 @@ Caddy obtains and renews TLS certificates for the configured site hostnames. The
 1. Sign in at `https://admin.<base-domain>`.
 2. Create team accounts and staff accounts. Team accounts are provisioned by an administrator or organizer; enter the team's display name when creating its login. The account directory can be sorted by username, role, team, or status. There is no public registration or email dependency.
 3. Create a scoreboard through the guided builder: enter its details, create device groups and select their supported check types, configure each group's IPv4 `{index}` pattern and ending octet, enroll teams to generate one host per group, configure a score-check template for every selected check type in each group, then review the setup. The score-check step shows per-group readiness; missing, disabled, paused, or unexpected checks need attention before review.
-4. Activate the competition. Scoring workers schedule rounds at the configured interval, claim queued rounds from PostgreSQL, execute checks concurrently, and record results and credit deposits. If workers are stopped, scoring pauses; after restart, workers resume from the competition's due schedule. A round already claimed by a worker that exits unexpectedly is not automatically reclaimed.
-5. Add and publish store items. Team purchases use simulated credits, produce ledger transactions, and remain pending until an organizer completes or refunds the order.
+4. Activate the competition. Scoring workers schedule rounds at the configured interval, claim queued rounds from PostgreSQL, execute checks concurrently, and deposit whole-dollar payouts. If workers are stopped, scoring pauses; after restart, workers resume from the competition's due schedule. A round already claimed by a worker that exits unexpectedly is not automatically reclaimed.
+5. Add and publish store items. Team purchases use simulated US dollars, produce ledger transactions, and remain pending until an administrator, bank operator, or organizer completes or refunds the order.
+
+All bank and store amounts are whole US dollars; cents are not accepted. Bank operators and administrators can add or remove funds for one team or all teams, set balances, or reset balances to zero. They can also configure global whole-dollar uptime rewards for each check type; each passing team/service result earns its reward once per scoring round, in addition to the competition's dollars-per-point payout. Failed checks earn no uptime reward. Set/reset actions are recorded as balancing transactions so the ledger history remains intact. Bank accounts, transactions, store items, and orders include search/filter controls; transaction details show staff attribution and related store or scoring information where available. Bank operators can manage bank and store workflows, organizers can manage competitions and the store, and administrators can access all areas.
 
 Administrators and organizers can rename accounts from **Accounts and teams**. Removing a team account permanently deletes its linked team, host assignments, check settings, scoring results, bank transactions, and store orders; staff audit references to a removed staff account are cleared. Scoreboards can be archived from the scoreboard list. Archiving pauses an active scoreboard, hides it from other menus, and retains its configuration and history; archived boards can only be viewed and restored under **Management Controls → Archived boards**. Restoring an active board resumes scoring.
 
@@ -99,7 +101,7 @@ sudo docker compose logs -f web scoring-worker
 sudo docker compose logs -f proxy
 ```
 
-`SCORING_THREADS` controls simultaneous service probes per scoring worker (1–64; default 8). `SCORING_TICK_SECONDS` controls how often a worker polls for due rounds (5–300 seconds; default 15). Each worker processes one scoring round at a time; scale the number of worker containers to increase round-level parallelism:
+`SCORING_THREADS` controls simultaneous service probes per scoring worker (1–64; default 64). `SCORING_TICK_SECONDS` controls how often a worker polls for due rounds (5–300 seconds; default 5). Workers process at most one round per competition at a time; missed intervals do not build a backlog, and rounds abandoned by a stopped worker are marked failed after progress heartbeats expire. Workers can process different competitions in parallel; scale the number of worker containers to increase that parallelism:
 
 ```bash
 sudo docker compose up -d --scale scoring-worker=3 scoring-worker
@@ -126,7 +128,7 @@ Service scoring metadata maps `weight` to base points and `pointsBoost` to a fla
 
 Usernames and passwords for SSH, WinRM, LDAPS, MySQL, and FTPS are encrypted before being saved in the service configuration. The setup script generates a dedicated `CHECK_CREDENTIAL_KEY`; back up and protect it separately from `SECRET_KEY`. Do not change or lose it without re-entering affected check credentials. Existing credentials encrypted by an earlier release can still be decrypted with the unchanged `SECRET_KEY`; re-save those checks after upgrading to encrypt them with the dedicated key. SSH checks pin the configured SHA256 host-key fingerprint by default; administrators can explicitly skip verification, which makes the check vulnerable to man-in-the-middle servers capturing credentials. WinRM requires HTTPS and certificate validation; supported authentication transports are NTLM and Basic (over HTTPS). TLS checks validate certificates; configure trusted certificates on the Docker image/host as appropriate. Arbitrary WinRM/SSH commands, user-supplied SQL statements, and FTP writes are deliberately not run.
 
-The current Engine UI separates service metadata from check properties. This platform maps `Weight`, `Points Boost`, pause/hide flags, and service-group membership. Service groups are organizational metadata only; they do not deploy workers. The scoreboard builder creates device groups before IP templates; each group selects supported check types, then receives its own IPv4 `{index}` pattern, ending octet, and team index range. Every device group gets one generated host address per enrolled team. The score-check step opens a configuration form for every selected group/check-type combination that does not yet have an enabled template; the same template runs for every enrolled team's matching host. Team indexes are assigned in ascending team-ID order, and generated addresses can be edited per team. Admins can optionally allow a team to edit only its own host address, restricted to configured CIDR ranges or exact hostnames. The team-check page shows the latest result and failure details with non-secret check information; management controls can enable high-level recommended hints for failures. A team can update only its own service-check password, not its UBNETDEF account password. Username edits remain organizer-controlled unless explicitly unlocked. Credential overrides are encrypted at rest and used only when scoring that team's host. Routes that accept resource IDs enforce role and owning-team authorization server-side; changing an ID in a URL does not grant access to another team's data. Organizers and admins can select any active competition team, while banker accounts are denied access. Changing a group's template regenerates addresses for its hosts. DNS check forms can fill the expected answer from the current selected DNS record; if left blank on save, the form resolves the answer server-side with a bounded timeout. SMB, IMAP, and CalDav are shown in the device-group type list for reference but are not currently implemented. Per-service `Round Units`/`Round Delay` still need explicit scheduling requirements. By default SQL uses fixed `SELECT 1` and WinRM/SSH check authentication only.
+The current Engine UI separates service metadata from check properties. This platform maps `Weight`, `Points Boost`, and pause/hide flags. Existing service-group metadata is retained for compatibility; it is organizational only and does not deploy workers. The scoreboard builder creates device groups before IP templates; each group selects supported check types, then receives its own IPv4 `{index}` pattern, ending octet, and team index range. Every device group gets one generated host address per enrolled team. The score-check step opens a configuration form for every selected group/check-type combination that does not yet have an enabled template; the same template runs for every enrolled team's matching host. Team indexes are assigned in ascending team-ID order, and generated addresses can be edited per team. Admins can optionally allow a team to edit only its own host address, restricted to configured CIDR ranges or exact hostnames. The team-check page shows the latest result and failure details with non-secret check information; management controls can enable high-level recommended hints for failures. A team can update only its own service-check password, not its UBNETDEF account password. Username edits remain organizer-controlled unless explicitly unlocked. Credential overrides are encrypted at rest and used only when scoring that team's host. Routes that accept resource IDs enforce role and owning-team authorization server-side; changing an ID in a URL does not grant access to another team's data. Organizers and admins can select any active competition team, while banker accounts are denied access. Changing a group's template regenerates addresses for its hosts. DNS check forms can fill the expected answer from the current selected DNS record; if left blank on save, the form resolves the answer server-side with a bounded timeout. Legacy SMB, IMAP, and CalDav records are retained for compatibility but are not offered as check types in the UI. Per-service `Round Units`/`Round Delay` still need explicit scheduling requirements. By default SQL uses fixed `SELECT 1` and WinRM/SSH check authentication only.
 
 ### Opt-in legacy compatibility modes
 
@@ -149,3 +151,18 @@ docker compose up --build
 ```
 
 The first run applies database migrations. Create an administrator with `docker compose exec web flask --app app:create_app bootstrap-admin`. No test data or default users are seeded. Redis is not required. When upgrading from a previous Compose setup, use `docker compose up --build --remove-orphans` so removed Redis/Celery containers are also stopped and removed; this does not delete their volumes.
+
+Run the platform tests in the application image (the repository is mounted only to provide the test files):
+
+```bash
+docker compose build web
+docker compose run --rm --no-deps -v "$PWD:/workspace:ro" --entrypoint python web \
+  -m unittest discover -s /workspace/tests -p "test_platform.py"
+```
+
+The setup-script integration test runs in a disposable Ubuntu 24.04 container. It mocks package installation and Docker commands, and verifies fresh-install setup, missing Docker prerequisites, database-import mode, generated secret formats/permissions, and invalid-key rejection without changing the host:
+
+```bash
+docker run --rm -v "$PWD:/workspace:ro" ubuntu:24.04 \
+  bash /workspace/tests/test_setup.sh
+```

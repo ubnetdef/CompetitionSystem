@@ -5,7 +5,7 @@
   <div class="hero-copy">
     <p class="eyebrow">ONE PLATFORM · EVERY COMPETITION</p>
     <h1>Everything your competition needs, in one place.</h1>
-    <p class="hero-lede">Manage scoring, team credits, and competition items from a connected system with one account for each team.</p>
+    <p class="hero-lede">Manage scoring, team dollar balances, and competition items from a connected system with one account for each team.</p>
     <div class="hero-actions">
       <a class="button button-primary" href="{{ url_for('auth.login') }}">Sign in to your team</a>
       <a class="button button-secondary" href="{{ url_for('main.scoreboard') }}">View scoreboard</a>
@@ -25,7 +25,7 @@
 
 <section class="feature-grid">
   <article class="feature-card"><span class="feature-index">01</span><h2>Engine</h2><p>Configure competitions, teams, service checks, and automated scoring rounds.</p><a href="{{ site_links.engine }}/scoreboard">Explore scoring →</a></article>
-  <article class="feature-card"><span class="feature-index">02</span><h2>Bank</h2><p>Track team credits through a transparent transaction ledger connected to scoring.</p><a href="{{ site_links.bank }}/bank">Open the bank →</a></article>
+  <article class="feature-card"><span class="feature-index">02</span><h2>Bank</h2><p>Track team dollar balances through a transparent transaction ledger connected to scoring.</p><a href="{{ site_links.bank }}/bank">Open the bank →</a></article>
   <article class="feature-card"><span class="feature-index">03</span><h2>Store</h2><p>Publish competition items, collect team orders, and manage fulfillment in one place.</p><a href="{{ site_links.store }}/store">Browse the store →</a></article>
 </section>
 
@@ -50,7 +50,7 @@
   <div class="card-grid">
     {% for product in products %}
       <article class="data-card">
-        <div class="card-heading"><h3>{{ product.name }}</h3><span class="price">{{ "%.2f"|format(product.price) }} cr</span></div>
+        <div class="card-heading"><h3>{{ product.name }}</h3><span class="price">{{ product.price|dollars }}</span></div>
         <p>{{ product.description or "Available to registered team accounts." }}</p>
       </article>
     {% endfor %}

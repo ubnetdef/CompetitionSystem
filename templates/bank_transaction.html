@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Transaction #{{ transaction.id }} · UBNETDEF{% endblock %}
+{% block content %}
+<section class="page-heading page-heading-row">
+  <div><p class="eyebrow">BANK LEDGER · TRANSACTION #{{ transaction.id }}</p><h1>Transaction details</h1><p>{{ transaction.description }}</p></div>
+  <a class="button button-secondary" href="{{ url_for('bank.team_account') if current_user.role == 'team' else url_for('bank.home') }}">Back to {{ "account" if current_user.role == "team" else "bank operations" }}</a>
+</section>
+
+<section class="transaction-detail-grid">
+  <article class="panel detail-panel">
+    <p class="eyebrow">TRANSACTION</p>
+    <dl class="detail-list">
+      <div><dt>Team account</dt><dd>{{ transaction.team.name }}</dd></div>
+      <div><dt>Type</dt><dd><span class="pill pill-{{ transaction.kind }}">{{ "Deposit" if transaction.kind == "credit" else "Withdrawal" }}</span></dd></div>
+      <div><dt>Amount</dt><dd class="{{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ transaction.amount|dollars }}</dd></div>
+      <div><dt>Date and time</dt><dd>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+      <div><dt>Recorded by</dt><dd>{{ transaction.created_by.username if transaction.created_by else ("Scoring engine" if transaction.score_result_id else "System") }}</dd></div>
+      <div><dt>Source</dt><dd>{% if transaction.order_id or related_order %}Store{% elif score_result %}Scoring{% elif transaction.created_by %}Staff adjustment{% else %}System{% endif %}</dd></div>
+      <div><dt>Description</dt><dd>{{ transaction.description }}</dd></div>
+    </dl>
+  </article>
+
+  {% if related_order %}
+    <article class="panel detail-panel">
+      <p class="eyebrow">RELATED STORE ORDER</p>
+      <h2>Order #{{ related_order.id }}</h2>
+      <dl class="detail-list">
+        <div><dt>Item</dt><dd>{{ related_order.product.name }}</dd></div>
+        <div><dt>Quantity</dt><dd>{{ related_order.quantity }}</dd></div>
+        <div><dt>Unit price</dt><dd>{{ related_order.unit_price|dollars }}</dd></div>
+        <div><dt>Order total</dt><dd>{{ related_order.total|dollars }}</dd></div>
+        <div><dt>Order status</dt><dd><span class="pill pill-{{ related_order.status }}">{{ related_order.status }}</span></dd></div>
+        <div><dt>Order date</dt><dd>{{ related_order.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+      </dl>
+      {% if related_order.answers %}
+        <h3>Purchase responses</h3>
+        <dl class="detail-list">
+          {% for answer in related_order.answers %}<div><dt>{{ answer.question.text }}</dt><dd>{{ answer.answer }}</dd></div>{% endfor %}
+        </dl>
+      {% endif %}
+    </article>
+  {% elif score_result %}
+    <article class="panel detail-panel">
+      <p class="eyebrow">RELATED SCORING RESULT</p>
+      <h2>{{ score_result.service.name }}</h2>
+      <dl class="detail-list">
+        <div><dt>Result</dt><dd>{{ "Passed" if score_result.passed else "Failed" }}</dd></div>
+        <div><dt>Points awarded</dt><dd>{{ score_result.points }}</dd></div>
+        <div><dt>Scoring round</dt><dd>#{{ score_result.score_round.number }}</dd></div>
+        <div><dt>Checked at</dt><dd>{{ score_result.checked_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd></div>
+        <div><dt>Latency</dt><dd>{{ score_result.latency_ms ~ " ms" if score_result.latency_ms is not none else "Not recorded" }}</dd></div>
+        <div><dt>Result details</dt><dd>{{ score_result.details or "No additional details." }}</dd></div>
+      </dl>
+    </article>
+  {% else %}
+    <article class="panel detail-panel">
+      <p class="eyebrow">LEDGER ENTRY</p>
+      <h2>Balance adjustment</h2>
+      <p class="muted">This transaction is not linked to a store order or scoring result. Its description and staff attribution above are the audit record.</p>
+    </article>
+  {% endif %}
+</section>
+{% endblock %}

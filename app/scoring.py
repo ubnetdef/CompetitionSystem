@@ -10,8 +10,9 @@ import socket
 import ssl
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+from decimal import Decimal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -26,13 +27,14 @@ import winrm
 from winrm.protocol import Protocol
 
 from . import create_app
-from .check_catalog import team_editable_fields
+from .check_catalog import CHECK_TYPE_PAYOUTS, team_editable_fields
 from .check_secrets import decrypt_credentials
 from .extensions import db
 from .models import (
     BankTransaction,
     Competition,
     Host,
+    PlatformSetting,
     ScoreResult,
     ScoreRound,
     Service,
@@ -42,6 +44,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES = 65536
+MAX_CHECK_TYPE_PAYOUT = Decimal("1000000")
 
 
 class _ResponseTooLarge(Exception):
@@ -64,6 +67,35 @@ def _format_address(address):
         if not value or any(char in value for char in "/?#@"):
             raise ValueError("Host must be a hostname or IP address.")
         return value
+
+
+def _configured_check_type_payouts():
+    settings = db.session.get(PlatformSetting, 1)
+    configured = settings.check_type_payouts if settings else {}
+    if not isinstance(configured, dict):
+        raise ValueError("Global check-type payout settings must be a mapping.")
+
+    payouts = {}
+    for check_type, raw_amount in configured.items():
+        if check_type not in CHECK_TYPE_PAYOUTS:
+            raise ValueError(f"Unknown check type in payout settings: {check_type}.")
+        try:
+            amount = Decimal(str(raw_amount))
+        except (ArithmeticError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"The {CHECK_TYPE_PAYOUTS[check_type]} payout is invalid."
+            ) from error
+        if (
+            not amount.is_finite()
+            or amount < 0
+            or amount > MAX_CHECK_TYPE_PAYOUT
+            or amount != amount.to_integral_value()
+        ):
+            raise ValueError(
+                f"The {CHECK_TYPE_PAYOUTS[check_type]} payout must be a whole-dollar amount from 0 to 1,000,000."
+            )
+        payouts[check_type] = amount
+    return payouts
 
 
 def _probe(job):
@@ -590,7 +622,21 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
         score_round.status = "running"
         if score_round.started_at is None:
             score_round.started_at = datetime.now(timezone.utc)
+        score_round.heartbeat_at = datetime.now(timezone.utc)
         payout_per_point = competition.payout_per_point
+        try:
+            check_type_payouts = _configured_check_type_payouts()
+        except ValueError as error:
+            logger.error(
+                "Scoring round %s has invalid global check-type payout settings: %s",
+                round_id,
+                error,
+            )
+            score_round.status = "failed"
+            score_round.error_message = str(error)[:350]
+            score_round.completed_at = datetime.now(timezone.utc)
+            db.session.commit()
+            return
         teams = list(competition.teams_with_accounts)
         hosts = {
             (host.team_id, host.host_group_id): host.address
@@ -605,7 +651,11 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
             {
                 "id": service.id,
                 "name": service.name,
-                "check_type": service.check_type or service.protocol,
+                "check_type": (
+                    "tcp"
+                    if service.protocol == "tcp"
+                    else service.check_type or service.protocol
+                ),
                 "check_config": service.check_config or {},
                 "team_editable_fields": team_editable_fields(
                     service.check_type,
@@ -728,11 +778,31 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
                     futures.append((job, None))
                 else:
                     futures.append((job, executor.submit(_probe, job)))
+
+            pending = {future for _, future in futures if future is not None}
+            future_results = {}
+            while pending:
+                completed, pending = wait(
+                    pending,
+                    timeout=10,
+                )
+                for future in completed:
+                    future_results[future] = future.result()
+                if pending:
+                    with app.app_context():
+                        score_round = db.session.get(ScoreRound, round_id)
+                        if score_round is None or score_round.status != "running":
+                            raise RuntimeError(
+                                f"Scoring round {round_id} is no longer running."
+                            )
+                        score_round.heartbeat_at = datetime.now(timezone.utc)
+                        db.session.commit()
+
             for job, future in futures:
                 if future is None:
                     result = (False, "No host address is configured for this team.", None)
                 else:
-                    result = future.result()
+                    result = future_results[future]
                 results.append((job, result))
     except Exception as error:
         logger.exception("Scoring round %s failed during execution.", round_id)
@@ -751,6 +821,26 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
             logger.error("Scoring round %s was removed before results could be saved.", round_id)
             return
 
+        credit_team_ids = sorted(
+            {
+                job["team_id"]
+                for job, (passed, _, _) in results
+                if (
+                    payout_per_point
+                    * (job["points"] + job.get("points_boost", 0) if passed else 0)
+                    + (check_type_payouts.get(job["check_type"], Decimal(0)) if passed else 0)
+                )
+                > 0
+            }
+        )
+        if credit_team_ids:
+            (
+                Team.query.filter(Team.id.in_(credit_team_ids))
+                .order_by(Team.id)
+                .with_for_update()
+                .all()
+            )
+
         for job, (passed, details, latency_ms) in results:
             points = (
                 job["points"] + job.get("points_boost", 0)
@@ -768,15 +858,26 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
             )
             db.session.add(result)
             db.session.flush()
-            credit = payout_per_point * points
+            uptime_reward = (
+                check_type_payouts.get(job["check_type"], Decimal(0))
+                if passed
+                else Decimal(0)
+            )
+            credit = payout_per_point * points + uptime_reward
             if credit > 0:
+                description = f"Scoring round {score_round.number}: {job['name']}"
+                if uptime_reward:
+                    description += (
+                        f" (includes ${uptime_reward:,.0f} "
+                        f"{CHECK_TYPE_PAYOUTS[job['check_type']]} uptime reward)"
+                    )
                 db.session.add(
                     BankTransaction(
                         team_id=job["team_id"],
                         score_result_id=result.id,
                         kind="credit",
                         amount=credit,
-                        description=f"Scoring round {score_round.number}: {job['name']}",
+                        description=description,
                     )
                 )
 

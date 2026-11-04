@@ -10,8 +10,8 @@ services:
       CHECK_CREDENTIAL_KEY: ${CHECK_CREDENTIAL_KEY:?Set CHECK_CREDENTIAL_KEY in .env}
       SESSION_COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
-      SCORING_THREADS: ${SCORING_THREADS:-8}
-      SCORING_TICK_SECONDS: ${SCORING_TICK_SECONDS:-15}
+      SCORING_THREADS: ${SCORING_THREADS:-64}
+      SCORING_TICK_SECONDS: ${SCORING_TICK_SECONDS:-5}
       DEFAULT_PAYOUT_PER_POINT: ${DEFAULT_PAYOUT_PER_POINT:-10}
     depends_on:
       database:
@@ -32,6 +32,12 @@ services:
       web:
         condition: service_healthy
     command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD", "flask", "--app", "app:create_app", "db-check"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   database:
     image: postgres:16-alpine

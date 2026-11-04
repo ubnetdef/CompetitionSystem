@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Bank · UBNETDEF{% endblock %}
+{% block content %}
+<section class="page-heading"><p class="eyebrow">TEAM BANK BALANCES</p><h1>Bank operations</h1><p>Manage dollar balances and review the auditable transaction ledger.</p></section>
+
+<section class="section-block">
+  <form class="panel form-panel" method="post" action="{{ url_for('bank.adjust') }}" onsubmit="return !this.elements.all_teams.checked || confirm('Apply this fund action to every team account?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p class="eyebrow">FUND CONTROLS</p><h2>Adjust team balance</h2>
+    <label for="team_id">Team account</label>
+    <select id="team_id" name="team_id">
+      {% for team in all_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}
+    </select>
+    <label class="checkbox-label all-teams-toggle"><input type="checkbox" name="all_teams" value="on"> All teams — apply this action to every team account</label>
+    <div class="form-row">
+      <div><label for="action">Action</label><select id="action" name="action"><option value="add">Add funds</option><option value="debit">Remove funds</option><option value="set">Set balance</option><option value="reset">Reset balance to $0</option></select></div>
+      <div><label for="amount">Amount or target balance ($)</label><input id="amount" name="amount" type="number" min="0" max="1000000" step="1" placeholder="Required except for reset"></div>
+    </div>
+    <label for="description">Reason</label><input id="description" name="description" maxlength="200" required placeholder="Competition award, correction, or other reason">
+    <p class="small-muted">Set and reset actions add only the deposit or withdrawal needed to reach the target. Existing ledger entries are never erased. An all-team withdrawal is rejected entirely if any selected balance is too low.</p>
+    <button class="button button-primary" type="submit">Save fund action</button>
+  </form>
+</section>
+
+<section class="section-block" id="uptime-rewards">
+  <form class="panel form-panel" method="post" action="{{ url_for('bank.update_check_type_payouts') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <p class="eyebrow">UPTIME REWARDS</p><h2>Check-type payout rates</h2>
+    <p class="small-muted">Global rates apply to every competition. Each passing check credits its rate once per scoring round, in addition to the competition's dollars-per-point payout. Failed checks earn no uptime reward. Set a rate to $0 to disable it.</p>
+    <div class="check-payout-grid">
+      {% for check_type, label in check_type_labels.items() %}
+        <div>
+          <label for="reward_{{ check_type }}">{{ label }} reward per pass ($)</label>
+          <input id="reward_{{ check_type }}" name="reward_{{ check_type }}" type="number" min="0" max="1000000" step="1" value="{{ check_type_payouts.get(check_type, 0) }}" required>
+        </div>
+      {% endfor %}
+    </div>
+    <button class="button button-primary" type="submit">Save uptime rates</button>
+  </form>
+</section>
+
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">TEAM ACCOUNTS</p><h2>{{ teams|length }} accounts</h2></div></div>
+  <form class="management-filters" method="get">
+    <div><label for="account_q">Team or username</label><input id="account_q" name="account_q" value="{{ request.args.get('account_q', '') }}" placeholder="Search accounts"></div>
+    <div><label for="min_balance">Minimum balance ($)</label><input id="min_balance" name="min_balance" type="number" min="0" step="1" value="{{ request.args.get('min_balance', '') }}"></div>
+    <div><label for="max_balance">Maximum balance ($)</label><input id="max_balance" name="max_balance" type="number" min="0" step="1" value="{{ request.args.get('max_balance', '') }}"></div>
+    <div class="filter-actions"><button class="button button-primary button-small" type="submit">Filter accounts</button><a class="button button-quiet button-small" href="{{ url_for('bank.home') }}">Clear</a></div>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th>Team</th><th>Username</th><th class="number">Balance</th></tr></thead><tbody>
+    {% for team in teams %}<tr><td>{{ team.name }}</td><td>{{ team.user.username if team.user else "No login" }}</td><td class="number score-number">{{ balances[team.id]|dollars }}</td></tr>
+    {% else %}<tr><td colspan="3" class="table-empty">No team accounts match these filters.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="section-block">
+  <div class="section-heading"><div><p class="eyebrow">AUDIT LEDGER</p><h2>Transactions</h2></div></div>
+  <form class="management-filters" method="get">
+    <div><label for="q">Search</label><input id="q" name="q" value="{{ request.args.get('q', '') }}" placeholder="Description, team, or username"></div>
+    <div><label for="team_id_filter">Team</label><select id="team_id_filter" name="team_id"><option value="">All teams</option>{% for team in all_teams %}<option value="{{ team.id }}" {% if request.args.get('team_id') == team.id|string %}selected{% endif %}>{{ team.name }}</option>{% endfor %}</select></div>
+    <div><label for="kind_filter">Type</label><select id="kind_filter" name="kind"><option value="">All types</option><option value="credit" {% if request.args.get('kind') == 'credit' %}selected{% endif %}>Deposit</option><option value="debit" {% if request.args.get('kind') == 'debit' %}selected{% endif %}>Withdrawal</option></select></div>
+    <div><label for="source_filter">Source</label><select id="source_filter" name="source"><option value="">All sources</option><option value="staff" {% if request.args.get('source') == 'staff' %}selected{% endif %}>Staff adjustment</option><option value="scoring" {% if request.args.get('source') == 'scoring' %}selected{% endif %}>Scoring</option><option value="store" {% if request.args.get('source') == 'store' %}selected{% endif %}>Store</option><option value="system" {% if request.args.get('source') == 'system' %}selected{% endif %}>System</option></select></div>
+    <div><label for="start_date">From</label><input id="start_date" name="start_date" type="date" value="{{ request.args.get('start_date', '') }}"></div>
+    <div><label for="end_date">To</label><input id="end_date" name="end_date" type="date" value="{{ request.args.get('end_date', '') }}"></div>
+    <div><label for="min_amount">Minimum amount ($)</label><input id="min_amount" name="min_amount" type="number" min="0" step="1" value="{{ request.args.get('min_amount', '') }}"></div>
+    <div><label for="max_amount">Maximum amount ($)</label><input id="max_amount" name="max_amount" type="number" min="0" step="1" value="{{ request.args.get('max_amount', '') }}"></div>
+    <div class="filter-actions"><button class="button button-primary button-small" type="submit">Filter transactions</button><a class="button button-quiet button-small" href="{{ url_for('bank.home') }}">Clear</a></div>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th>Transaction</th><th>Date</th><th>Team</th><th>Type</th><th>Description</th><th>Recorded by</th><th class="number">Amount</th></tr></thead><tbody>
+    {% if not transaction_filters_applied %}
+      <tr><td colspan="7" class="table-empty">Apply filters to load audit ledger transactions.</td></tr>
+    {% else %}
+      {% for transaction in transactions %}
+        <tr>
+          <td><a class="table-action" href="{{ url_for('bank.transaction_detail', transaction_id=transaction.id) }}">#{{ transaction.id }}</a></td>
+          <td>{{ transaction.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+          <td>{{ transaction.team.name }}</td>
+          <td><span class="pill pill-{{ transaction.kind }}">{{ "Deposit" if transaction.kind == "credit" else "Withdrawal" }}</span></td>
+          <td>{{ transaction.description }}{% if transaction.order_id %}<small class="table-subtext">Store order #{{ transaction.order_id }}</small>{% elif transaction.score_result_id %}<small class="table-subtext">Scoring result #{{ transaction.score_result_id }}</small>{% endif %}</td>
+          <td>{{ transaction.created_by.username if transaction.created_by else ("Scoring engine" if transaction.score_result_id else "System") }}</td>
+          <td class="number {{ 'positive' if transaction.kind == 'credit' else 'negative' }}">{{ "+" if transaction.kind == "credit" else "−" }}{{ transaction.amount|dollars }}</td>
+        </tr>
+      {% else %}<tr><td colspan="7" class="table-empty">No transactions match these filters.</td></tr>{% endfor %}
+    {% endif %}
+  </tbody></table></div>
+</section>
+{% endblock %}

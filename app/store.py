@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import func, or_
+from sqlalchemy import String, func, or_
 
 from .bank import balance_for
 from .extensions import db
@@ -24,10 +24,14 @@ def _query_price(name, label):
     except InvalidOperation:
         flash(f"Enter a valid {label} price.", "error")
         return None
-    if not price.is_finite() or price < 0:
-        flash(f"The {label} price must be a non-negative number.", "error")
+    if (
+        not price.is_finite()
+        or price < 0
+        or price != price.to_integral_value()
+    ):
+        flash(f"The {label} price must be a non-negative whole-dollar amount.", "error")
         return None
-    return price
+    return price.quantize(Decimal("1"))
 
 
 def _filtered_products(query, staff=False):
@@ -41,6 +45,7 @@ def _filtered_products(query, staff=False):
     max_price = _query_price("max_price", "maximum")
     if min_price is not None and max_price is not None and min_price > max_price:
         flash("The minimum price cannot exceed the maximum price.", "error")
+        min_price = max_price = None
     else:
         if min_price is not None:
             query = query.filter(Product.price >= min_price)
@@ -81,7 +86,7 @@ def _filtered_orders(query, staff=False):
             criteria.extend(
                 [
                     Team.name.ilike(f"%{text}%"),
-                    Order.id.cast(db.String).ilike(f"%{text}%"),
+                    Order.id.cast(String).ilike(f"%{text}%"),
                 ]
             )
         query = query.filter(or_(*criteria))
@@ -113,14 +118,12 @@ def _filtered_orders(query, staff=False):
     else:
         if start_day:
             query = query.filter(
-                Order.created_at >= datetime.combine(start_day, datetime.min.time(), timezone.utc)
+                Order.created_at >= datetime.combine(start_day, time.min, timezone.utc)
             )
         if end_day:
-            from datetime import date, timedelta
-
             query = query.filter(
                 Order.created_at
-                < datetime.combine(end_day + timedelta(days=1), datetime.min.time(), timezone.utc)
+                < datetime.combine(end_day + timedelta(days=1), time.min, timezone.utc)
             )
     return query
 
@@ -130,8 +133,6 @@ def _query_date(name, label):
     if not raw:
         return None
     try:
-        from datetime import date
-
         return date.fromisoformat(raw)
     except ValueError:
         flash(f"Enter a valid {label} date.", "error")
@@ -144,7 +145,11 @@ def _filter_args():
 
 @store_bp.route("/")
 def catalog():
-    products = _filtered_products(Product.query.filter_by(published=True))
+    can_filter = current_user.is_authenticated and current_user.role in STORE_STAFF_ROLES
+    product_query = Product.query.filter_by(published=True)
+    if can_filter:
+        product_query = _filtered_products(product_query)
+    products = product_query
     now = datetime.now(timezone.utc)
     available_products = [
         product
@@ -152,7 +157,7 @@ def catalog():
         if product.available_until is None
         or _as_utc(product.available_until) > now
     ]
-    sort = request.args.get("sort", "newest")
+    sort = request.args.get("sort", "newest") if can_filter else "newest"
     if sort == "name":
         available_products.sort(key=lambda product: product.name.casefold())
     elif sort == "price_low":
@@ -170,7 +175,12 @@ def catalog():
     balance = None
     if current_user.is_authenticated and current_user.role == "team":
         balance = balance_for(current_user.team_id)
-    return render_template("store.html", products=available_products, balance=balance)
+    return render_template(
+        "store.html",
+        products=available_products,
+        balance=balance,
+        show_store_filters=can_filter,
+    )
 
 
 @store_bp.post("/products/<int:product_id>/purchase")
@@ -223,7 +233,7 @@ def purchase(product_id):
     total = product.price * quantity
     if balance_for(team.id) < total:
         flash(
-            f"Insufficient balance. This order costs {total:.2f}; your available balance is {balance_for(team.id):.2f}.",
+            f"Insufficient balance. This order costs ${total:,.0f}; your available balance is ${balance_for(team.id):,.0f}.",
             "error",
         )
         return redirect(url_for("store.catalog"))
@@ -280,7 +290,7 @@ def orders():
         ).order_by(Order.created_at.desc(), Order.id.desc()).all()
         return render_template("orders.html", orders=results, is_admin=False)
     if current_user.role not in STORE_STAFF_ROLES:
-        flash("Only team accounts and organizers can view orders.", "error")
+        flash("Only team accounts and authorized staff can view orders.", "error")
         return redirect(url_for("store.catalog"))
     return redirect(url_for("store.manage_orders"))
 
@@ -328,7 +338,7 @@ def manage_products():
         if not name or len(name) > 120:
             flash("Item name must contain between 1 and 120 characters.", "error")
         elif price is None:
-            flash("Price must be a positive amount no greater than 1,000,000.00.", "error")
+            flash("Price must be a whole-dollar amount from $1 to $1,000,000.", "error")
         elif stock_count is not None and stock_count < 0:
             flash("Stock must be a non-negative whole number, or leave it blank for unlimited stock.", "error")
         elif max_per_team is not None and max_per_team < 1:
@@ -398,20 +408,24 @@ def refund_order(order_id):
     elif order.status == "refunded":
         flash("That order has already been refunded.", "info")
     else:
-        db.session.add(
-            BankTransaction(
-                team_id=order.team_id,
-                created_by_id=current_user.id,
-                kind="credit",
-                amount=order.total,
-                description=f"Refund for store order #{order.id}",
+        team = Team.query.filter_by(id=order.team_id).with_for_update().first()
+        if team is None:
+            flash("The team account for this order no longer exists.", "error")
+        else:
+            db.session.add(
+                BankTransaction(
+                    team_id=team.id,
+                    created_by_id=current_user.id,
+                    kind="credit",
+                    amount=order.total,
+                    description=f"Refund for store order #{order.id}",
+                )
             )
-        )
-        if order.product.stock_count is not None:
-            order.product.stock_count += order.quantity
-        order.status = "refunded"
-        db.session.commit()
-        flash(f"Order #{order.id} refunded and balance restored.", "success")
+            if order.product.stock_count is not None:
+                order.product.stock_count += order.quantity
+            order.status = "refunded"
+            db.session.commit()
+            flash(f"Order #{order.id} refunded and balance restored.", "success")
     return redirect(url_for("store.manage_orders", **_filter_args()))
 
 
