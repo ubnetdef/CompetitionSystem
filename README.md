@@ -36,6 +36,14 @@ The setup script targets **Ubuntu Server 24.04** and checks for Docker, Docker C
 
 The default preview deliberately avoids public ports 80/443 so it can be evaluated on the same VM without displacing the current system. `.env` contains database, signing, and check-credential encryption secrets; keep it private and back it up securely. The installer refuses to start if the credential-encryption key is not exactly 64 hexadecimal characters or if Docker Compose cannot resolve its required settings.
 
+For a **full clean reinstall** on a VM, first back up anything you need, then run:
+
+```bash
+sudo env CLEAN_DOCKER_INSTALL=true bash scripts/setup.sh
+```
+
+The script requires you to type `WIPE ALL DOCKER DATA` before proceeding. This removes every Docker container, image, network, volume, Docker package, and the rootful Docker data/configuration directories from that VM, including data belonging to other Docker applications. It then installs missing Docker prerequisites and continues with a fresh CompetitionSystem setup. The checkout and its `.env` file are not deleted, so the existing domain and application secrets are reused; back up or manually replace `.env` if you want new settings/secrets. Do not use this on a shared Docker host or if you need to preserve any Docker data. This reset targets standard rootful Docker installations; it does not migrate or preserve existing application data.
+
 To migrate an existing installation, securely copy its `.env` and database backup to the VM first. Run `sudo env DATABASE_IMPORT_ONLY=true bash scripts/setup.sh` to install prerequisites, stop the web app and scoring worker, and start PostgreSQL for the import. Restore the database, then run `sudo bash scripts/setup.sh`; the existing administrator account will be detected and preserved.
 
 ### Import the local competition database to a VM
@@ -160,7 +168,7 @@ docker compose run --rm --no-deps -v "$PWD:/workspace:ro" --entrypoint python we
   -m unittest discover -s /workspace/tests -p "test_platform.py"
 ```
 
-The setup-script integration test runs in a disposable Ubuntu 24.04 container. It mocks package installation and Docker commands, and verifies fresh-install setup, missing Docker prerequisites, database-import mode, generated secret formats/permissions, and invalid-key rejection without changing the host:
+The setup-script integration test runs in a disposable Ubuntu 24.04 container. It mocks package installation and Docker commands, and verifies fresh-install setup, missing Docker prerequisites, database-import mode, generated secret formats/permissions, invalid-key rejection, and the guarded full-reset/cancellation paths without changing the host:
 
 ```bash
 docker run --rm -v "$PWD:/workspace:ro" ubuntu:24.04 \

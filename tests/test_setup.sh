@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'status=$?; printf "Installer test failed (status %s): %s\n" "$status" "$BASH_COMMAND" >&2' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -38,8 +39,16 @@ printf '%s\n' "$*" >> "$TEST_DOCKER_LOG"
 if [[ "$1" == "info" ]]; then
   exit 0
 fi
+if [[ "$1" == "ps" && "${2:-}" == "-aq" ]]; then
+  echo "test-container"
+  exit 0
+fi
 if [[ "$1" == "inspect" ]]; then
   echo "healthy"
+  exit 0
+fi
+if [[ "$1" == "volume" && "$2" == "ls" && "${3:-}" == "-q" ]]; then
+  echo "test-volume"
   exit 0
 fi
 if [[ "$1" == "compose" && "$2" == "version" ]]; then
@@ -127,6 +136,10 @@ grep -Fq "compose exec -T web python -c" "$FRESH_LOG"
 grep -Fq "compose exec -T scoring-worker flask --app app:create_app db-check" "$FRESH_LOG"
 grep -Fq "compose exec web flask --app app:create_app bootstrap-admin" "$FRESH_LOG"
 [[ -f "$FRESH_ADMIN" ]]
+if grep -Fq "rm -f test-container" "$FRESH_LOG"; then
+  echo "Default installer mode unexpectedly entered the Docker reset path." >&2
+  exit 1
+fi
 
 PRESERVED_SECRET="$generated_secret"
 RERUN_LOG="$TEMP_DIR/rerun-docker.log"
@@ -233,5 +246,79 @@ grep -Fq "docker.io" "$TEMP_DIR/apt.log"
 grep -Fq "docker-compose-v2" "$TEMP_DIR/apt.log"
 grep -Fq "openssl" "$TEMP_DIR/apt.log"
 grep -Fq "compose up -d --build --remove-orphans" "$MISSING_DOCKER_LOG"
+
+make_project "$TEMP_DIR/cancel-reset"
+make_stubs "$TEMP_DIR/cancel-reset-stubs"
+CANCEL_RESET_OUTPUT="$TEMP_DIR/cancel-reset-output.log"
+if (
+  cd "$TEMP_DIR/cancel-reset"
+  printf '%s\n' "NO" |
+    env PATH="$TEMP_DIR/cancel-reset-stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      CLEAN_DOCKER_INSTALL=true \
+      TEST_DOCKER_LOG="$TEMP_DIR/cancel-reset-docker.log" \
+      TEST_ADMIN_EXISTS="$TEMP_DIR/cancel-reset-admin" \
+      TEST_OPENSSL_COUNTER="$TEMP_DIR/cancel-reset-openssl-count" \
+      bash scripts/setup.sh
+) > "$CANCEL_RESET_OUTPUT" 2>&1; then
+  echo "Expected an incorrect reset confirmation to cancel installation." >&2
+  exit 1
+fi
+grep -Fq "Docker reset cancelled" "$CANCEL_RESET_OUTPUT"
+[[ ! -e "$TEMP_DIR/cancel-reset-docker.log" ]]
+[[ ! -e "$TEMP_DIR/cancel-reset-admin" ]]
+
+make_project "$TEMP_DIR/full-reset"
+make_stubs "$TEMP_DIR/full-reset-stubs"
+FULL_RESET_LOG="$TEMP_DIR/full-reset-docker.log"
+FULL_RESET_APT_LOG="$TEMP_DIR/full-reset-apt.log"
+FULL_RESET_ADMIN="$TEMP_DIR/full-reset-admin"
+FULL_RESET_COUNTER="$TEMP_DIR/full-reset-openssl-count"
+FULL_RESET_OUTPUT="$TEMP_DIR/full-reset-output.log"
+cat > "$TEMP_DIR/full-reset-stubs/dpkg-query" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "ii"
+STUB
+chmod 700 "$TEMP_DIR/full-reset-stubs/dpkg-query"
+cat > "$TEMP_DIR/full-reset-stubs/apt-get" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$TEST_APT_LOG"
+if [[ "$1" == "purge" ]]; then
+  rm -f "$TEST_STUB_BIN/docker"
+elif [[ "$1" == "install" ]]; then
+  cp "$TEST_DOCKER_TEMPLATE" "$TEST_STUB_BIN/docker"
+  chmod 700 "$TEST_STUB_BIN/docker"
+fi
+STUB
+chmod 700 "$TEMP_DIR/full-reset-stubs/apt-get"
+FULL_RESET_PATH="$TEMP_DIR/full-reset-stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+if ! (
+  cd "$TEMP_DIR/full-reset"
+  printf '%s\n' "WIPE ALL DOCKER DATA" "competition.example.org" |
+    env PATH="$FULL_RESET_PATH" \
+      CLEAN_DOCKER_INSTALL=true \
+      TEST_DOCKER_LOG="$FULL_RESET_LOG" \
+      TEST_ADMIN_EXISTS="$FULL_RESET_ADMIN" \
+      TEST_OPENSSL_COUNTER="$FULL_RESET_COUNTER" \
+      TEST_APT_LOG="$FULL_RESET_APT_LOG" \
+      TEST_DOCKER_TEMPLATE="$TEMP_DIR/fresh-stubs/docker" \
+      TEST_STUB_BIN="$TEMP_DIR/full-reset-stubs" \
+      bash scripts/setup.sh
+) > "$FULL_RESET_OUTPUT" 2>&1; then
+  cat "$FULL_RESET_OUTPUT" >&2
+  exit 1
+fi
+grep -Fq "rm -f test-container" "$FULL_RESET_LOG"
+grep -Fq "volume rm -f test-volume" "$FULL_RESET_LOG"
+grep -Fq "system prune --all --volumes --force" "$FULL_RESET_LOG"
+grep -Fq "purge -y docker.io" "$FULL_RESET_APT_LOG"
+if ! grep -Fq "install -y docker.io docker-compose-v2" "$FULL_RESET_APT_LOG"; then
+  cat "$FULL_RESET_APT_LOG" >&2
+  cat "$FULL_RESET_OUTPUT" >&2
+  exit 1
+fi
+grep -Fq "A full Docker reset deletes every Docker container" "$FULL_RESET_OUTPUT"
 
 echo "Installer flow tests passed."

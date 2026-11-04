@@ -28,6 +28,72 @@ if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" ]]; then
   exit 1
 fi
 
+purge_docker_installation() {
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    mapfile -t containers < <(docker ps -aq)
+    if ((${#containers[@]})); then
+      docker rm -f "${containers[@]}"
+    fi
+
+    mapfile -t volumes < <(docker volume ls -q)
+    if ((${#volumes[@]})); then
+      docker volume rm -f "${volumes[@]}"
+    fi
+    docker system prune --all --volumes --force
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    for unit in docker.socket docker.service; do
+      if systemctl is-active --quiet "$unit"; then
+        systemctl stop "$unit"
+      fi
+    done
+  fi
+
+  docker_packages=()
+  if command -v dpkg-query >/dev/null 2>&1; then
+    for package in \
+      docker.io \
+      docker-ce \
+      docker-ce-cli \
+      docker-ce-rootless-extras \
+      docker-buildx-plugin \
+      docker-compose-plugin \
+      docker-compose-v2 \
+      docker-compose \
+      containerd.io
+    do
+      if dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null |
+        grep -q '^ii'; then
+        docker_packages+=("$package")
+      fi
+    done
+  fi
+  if ((${#docker_packages[@]})); then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${docker_packages[@]}"
+  fi
+
+  rm -rf -- /var/lib/docker /etc/docker
+  hash -r
+}
+
+case "${CLEAN_DOCKER_INSTALL:-false}" in
+  false) ;;
+  true)
+    echo "WARNING: A full Docker reset deletes every Docker container, image, network, volume, and rootful Docker data directory on this VM."
+    read -r -p "Type WIPE ALL DOCKER DATA to continue: " confirmation
+    if [[ "$confirmation" != "WIPE ALL DOCKER DATA" ]]; then
+      echo "Docker reset cancelled; no Docker data was removed." >&2
+      exit 1
+    fi
+    purge_docker_installation
+    ;;
+  *)
+    echo "CLEAN_DOCKER_INSTALL must be either true or false." >&2
+    exit 1
+    ;;
+esac
+
 install_packages=()
 if ! command -v docker >/dev/null 2>&1; then
   install_packages+=(docker.io)
