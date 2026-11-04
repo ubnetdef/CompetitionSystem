@@ -2,6 +2,14 @@ TEAM_CREDENTIAL_CHECK_TYPES = frozenset({"ssh", "winrm", "ldap", "sql", "ftp"})
 TEAM_EDITABLE_CREDENTIAL_FIELDS = frozenset({"username", "password"})
 
 
+def team_editable_fields(check_type, configured_fields):
+    if check_type not in TEAM_CREDENTIAL_CHECK_TYPES:
+        return set()
+    return (set(configured_fields or []) & TEAM_EDITABLE_CREDENTIAL_FIELDS) | {
+        "password"
+    }
+
+
 CHECK_CATALOG = {
     "http": {
         "label": "HTTP / HTTPS",

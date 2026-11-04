@@ -156,7 +156,7 @@
       <legend>Team account access</legend>
       <p class="muted">Unlock only the credential fields teams are allowed to change for their own hosts. Passwords are never displayed after saving.</p>
       <label class="checkbox-label"><input type="checkbox" name="team_editable_fields" value="username" {% if editing_service and 'username' in (editing_service.team_editable_fields or []) %}checked{% endif %}> Unlock username for team updates</label>
-      <label class="checkbox-label"><input type="checkbox" name="team_editable_fields" value="password" {% if editing_service and 'password' in (editing_service.team_editable_fields or []) %}checked{% endif %}> Unlock password for team updates</label>
+      <p class="muted">Teams can update this check's password. This does not change their UBNETDEF account password.</p>
     </fieldset>
     <div class="form-row">
       <div><label for="points">Points</label><input id="points" name="points" type="number" min="1" max="10000" value="{{ editing_service.points if editing_service else 1 }}" required></div>

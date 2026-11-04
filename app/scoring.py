@@ -26,6 +26,7 @@ import winrm
 from winrm.protocol import Protocol
 
 from . import create_app
+from .check_catalog import team_editable_fields
 from .check_secrets import decrypt_credentials
 from .extensions import db
 from .models import (
@@ -606,7 +607,10 @@ def process_scoring_round(round_id, flask_app=None, claimed=False):
                 "name": service.name,
                 "check_type": service.check_type or service.protocol,
                 "check_config": service.check_config or {},
-                "team_editable_fields": set(service.team_editable_fields or []),
+                "team_editable_fields": team_editable_fields(
+                    service.check_type,
+                    service.team_editable_fields,
+                ),
                 "protocol": service.protocol,
                 "port": service.port,
                 "path": service.path,

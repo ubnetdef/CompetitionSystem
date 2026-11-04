@@ -81,6 +81,9 @@ def management_controls():
         settings.scoreboard_competition_selector_enabled = (
             request.form.get("scoreboard_competition_selector_enabled") == "on"
         )
+        settings.score_check_hints_enabled = (
+            request.form.get("score_check_hints_enabled") == "on"
+        )
         db.session.commit()
         flash("Management controls saved.", "success")
         return redirect(url_for("admin.management_controls"))
@@ -88,6 +91,9 @@ def management_controls():
         "management_controls.html",
         scoreboard_competition_selector_enabled=bool(
             settings and settings.scoreboard_competition_selector_enabled
+        ),
+        score_check_hints_enabled=bool(
+            settings and settings.score_check_hints_enabled
         ),
         archived_boards=Competition.query.filter_by(is_archived=True)
         .order_by(Competition.created_at.desc())
@@ -102,9 +108,7 @@ def users():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         role = request.form.get("role", "")
-        team_name = request.form.get("team_name", "").strip()
-        team_id = request.form.get("team_id", type=int)
-        selected_team = db.session.get(Team, team_id) if team_id else None
+        display_name = request.form.get("display_name", "").strip()
 
         allowed_roles = (
             {"team", "banker", "organizer", "admin"}
@@ -119,24 +123,17 @@ def users():
             flash("New accounts must use a password with at least 12 characters.", "error")
         elif User.query.filter(func.lower(User.username) == username.lower()).first():
             flash("That username is already in use.", "error")
-        elif role == "team" and team_id and (
-            selected_team is None or selected_team.user is not None
-        ):
-            flash("Choose an existing team without an assigned login.", "error")
-        elif role == "team" and not team_id and (
-            not team_name or len(team_name) > 120
-        ):
-            flash("Choose an existing team or enter a new team name.", "error")
-        elif role == "team" and not team_id and Team.query.filter(func.lower(Team.name) == team_name.lower()).first():
-            flash("That team name is already in use.", "error")
+        elif role == "team" and (not display_name or len(display_name) > 120):
+            flash("Team display name must contain between 1 and 120 characters.", "error")
+        elif role == "team" and Team.query.filter(func.lower(Team.name) == display_name.lower()).first():
+            flash("That team display name is already in use.", "error")
         else:
             user = User(username=username, role=role)
             user.set_password(password)
             if role == "team":
-                team = selected_team or Team(name=team_name)
-                if selected_team is None:
-                    db.session.add(team)
-                    db.session.flush()
+                team = Team(name=display_name)
+                db.session.add(team)
+                db.session.flush()
                 user.team = team
             db.session.add(user)
             try:
@@ -147,10 +144,34 @@ def users():
                 db.session.rollback()
                 flash("The account could not be saved because its username or team name is already in use.", "error")
 
+    sort_options = {
+        "created": User.created_at,
+        "username": User.username,
+        "role": User.role,
+        "team": Team.name,
+        "status": User.is_active,
+    }
+    sort_by = request.args.get("sort", "created")
+    if sort_by not in sort_options:
+        sort_by = "created"
+    sort_direction = request.args.get("direction", "desc").lower()
+    if sort_direction not in {"asc", "desc"}:
+        sort_direction = "desc"
+    sort_column = sort_options[sort_by]
+    sort_expression = (
+        sort_column.desc()
+        if sort_direction == "desc"
+        else sort_column.asc()
+    )
+    users_query = User.query.outerjoin(Team, User.team_id == Team.id).order_by(
+        sort_expression,
+        User.id.desc(),
+    )
     return render_template(
         "users.html",
-        users=User.query.order_by(User.created_at.desc()).all(),
-        unassigned_teams=Team.query.filter(~Team.user.has()).order_by(Team.name).all(),
+        users=users_query.all(),
+        sort_by=sort_by,
+        sort_direction=sort_direction,
         is_admin=_is_admin(),
         admin_count=User.query.filter_by(role="admin").count(),
     )

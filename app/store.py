@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from .bank import balance_for
 from .extensions import db
@@ -10,15 +12,139 @@ from .security import roles_required, team_required
 from .utils import parse_amount, parse_local_datetime
 
 store_bp = Blueprint("store", __name__)
+STORE_STAFF_ROLES = {"admin", "banker", "organizer"}
+
+
+def _query_price(name, label):
+    raw = request.args.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        price = Decimal(raw)
+    except InvalidOperation:
+        flash(f"Enter a valid {label} price.", "error")
+        return None
+    if not price.is_finite() or price < 0:
+        flash(f"The {label} price must be a non-negative number.", "error")
+        return None
+    return price
+
+
+def _filtered_products(query, staff=False):
+    text = request.args.get("q", "").strip()
+    if text:
+        query = query.filter(
+            or_(Product.name.ilike(f"%{text}%"), Product.description.ilike(f"%{text}%"))
+        )
+
+    min_price = _query_price("min_price", "minimum")
+    max_price = _query_price("max_price", "maximum")
+    if min_price is not None and max_price is not None and min_price > max_price:
+        flash("The minimum price cannot exceed the maximum price.", "error")
+    else:
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
+
+    if staff:
+        visibility = request.args.get("visibility", "")
+        if visibility == "published":
+            query = query.filter(Product.published.is_(True))
+        elif visibility == "hidden":
+            query = query.filter(Product.published.is_(False))
+        elif visibility:
+            flash("Choose a valid item visibility filter.", "error")
+
+        stock = request.args.get("stock", "")
+        if stock == "available":
+            query = query.filter(
+                or_(Product.stock_count.is_(None), Product.stock_count > 0)
+            )
+        elif stock == "sold_out":
+            query = query.filter(Product.stock_count == 0)
+        elif stock == "unlimited":
+            query = query.filter(Product.stock_count.is_(None))
+        elif stock:
+            flash("Choose a valid stock filter.", "error")
+    return query
+
+
+def _filtered_orders(query, staff=False):
+    query = query.join(Product, Order.product_id == Product.id)
+    if staff:
+        query = query.join(Team, Order.team_id == Team.id)
+    text = request.args.get("q", "").strip()
+    if text:
+        criteria = [Product.name.ilike(f"%{text}%")]
+        if staff:
+            criteria.extend(
+                [
+                    Team.name.ilike(f"%{text}%"),
+                    Order.id.cast(db.String).ilike(f"%{text}%"),
+                ]
+            )
+        query = query.filter(or_(*criteria))
+
+    status = request.args.get("status", "")
+    if status in {"pending", "completed", "refunded"}:
+        query = query.filter(Order.status == status)
+    elif status:
+        flash("Choose a valid order status filter.", "error")
+
+    if staff:
+        for field, column, label in (
+            ("team_id", Order.team_id, "team"),
+            ("product_id", Order.product_id, "item"),
+        ):
+            raw_id = request.args.get(field, "").strip()
+            if raw_id:
+                try:
+                    object_id = int(raw_id)
+                except ValueError:
+                    flash(f"Choose a valid {label} filter.", "error")
+                else:
+                    query = query.filter(column == object_id)
+
+    start_day = _query_date("start_date", "start")
+    end_day = _query_date("end_date", "end")
+    if start_day and end_day and end_day < start_day:
+        flash("The end date must be on or after the start date.", "error")
+    else:
+        if start_day:
+            query = query.filter(
+                Order.created_at >= datetime.combine(start_day, datetime.min.time(), timezone.utc)
+            )
+        if end_day:
+            from datetime import date, timedelta
+
+            query = query.filter(
+                Order.created_at
+                < datetime.combine(end_day + timedelta(days=1), datetime.min.time(), timezone.utc)
+            )
+    return query
+
+
+def _query_date(name, label):
+    raw = request.args.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        from datetime import date
+
+        return date.fromisoformat(raw)
+    except ValueError:
+        flash(f"Enter a valid {label} date.", "error")
+        return None
+
+
+def _filter_args():
+    return {key: value for key, value in request.args.items() if value}
 
 
 @store_bp.route("/")
 def catalog():
-    products = (
-        Product.query.filter_by(published=True)
-        .order_by(Product.created_at.desc())
-        .all()
-    )
+    products = _filtered_products(Product.query.filter_by(published=True))
     now = datetime.now(timezone.utc)
     available_products = [
         product
@@ -26,6 +152,21 @@ def catalog():
         if product.available_until is None
         or _as_utc(product.available_until) > now
     ]
+    sort = request.args.get("sort", "newest")
+    if sort == "name":
+        available_products.sort(key=lambda product: product.name.casefold())
+    elif sort == "price_low":
+        available_products.sort(key=lambda product: (product.price, product.name.casefold()))
+    elif sort == "price_high":
+        available_products.sort(
+            key=lambda product: (product.price, product.name.casefold()), reverse=True
+        )
+    else:
+        if sort != "newest":
+            flash("Choose a valid item sort order.", "error")
+        available_products.sort(
+            key=lambda product: (product.created_at, product.id), reverse=True
+        )
     balance = None
     if current_user.is_authenticated and current_user.role == "team":
         balance = balance_for(current_user.team_id)
@@ -134,27 +275,35 @@ def purchase(product_id):
 @login_required
 def orders():
     if current_user.role == "team":
-        results = (
-            Order.query.filter_by(team_id=current_user.team_id)
-            .order_by(Order.created_at.desc())
-            .all()
-        )
+        results = _filtered_orders(
+            Order.query.filter_by(team_id=current_user.team_id), staff=False
+        ).order_by(Order.created_at.desc(), Order.id.desc()).all()
         return render_template("orders.html", orders=results, is_admin=False)
-    if current_user.role not in {"admin", "organizer"}:
+    if current_user.role not in STORE_STAFF_ROLES:
         flash("Only team accounts and organizers can view orders.", "error")
         return redirect(url_for("store.catalog"))
     return redirect(url_for("store.manage_orders"))
 
 
 @store_bp.route("/manage/orders")
-@roles_required("admin", "organizer")
+@roles_required("admin", "banker", "organizer")
 def manage_orders():
-    orders = Order.query.order_by(Order.created_at.desc()).all()
-    return render_template("orders.html", orders=orders, is_admin=True)
+    orders = _filtered_orders(
+        Order.query, staff=True
+    ).order_by(Order.created_at.desc(), Order.id.desc()).all()
+    teams = Team.query.filter(Team.user.has()).order_by(Team.name).all()
+    products = Product.query.order_by(Product.name).all()
+    return render_template(
+        "orders.html",
+        orders=orders,
+        is_admin=True,
+        teams=teams,
+        products=products,
+    )
 
 
 @store_bp.route("/manage/products", methods=["GET", "POST"])
-@roles_required("admin", "organizer")
+@roles_required("admin", "banker", "organizer")
 def manage_products():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -204,12 +353,14 @@ def manage_products():
             flash(f"Item '{name}' created.", "success")
             return redirect(url_for("store.manage_products"))
 
-    products = Product.query.order_by(Product.created_at.desc()).all()
+    products = _filtered_products(
+        Product.query, staff=True
+    ).order_by(Product.created_at.desc(), Product.id.desc()).all()
     return render_template("manage_products.html", products=products)
 
 
 @store_bp.post("/manage/products/<int:product_id>/toggle")
-@roles_required("admin", "organizer")
+@roles_required("admin", "banker", "organizer")
 def toggle_product(product_id):
     product = db.session.get(Product, product_id)
     if product is None:
@@ -218,11 +369,11 @@ def toggle_product(product_id):
         product.published = not product.published
         db.session.commit()
         flash(f"Item '{product.name}' {'published' if product.published else 'hidden'}.", "success")
-    return redirect(url_for("store.manage_products"))
+    return redirect(url_for("store.manage_products", **_filter_args()))
 
 
 @store_bp.post("/manage/orders/<int:order_id>/complete")
-@roles_required("admin", "organizer")
+@roles_required("admin", "banker", "organizer")
 def complete_order(order_id):
     order = db.session.get(Order, order_id)
     if order is None:
@@ -235,11 +386,11 @@ def complete_order(order_id):
         order.completed_by_id = current_user.id
         db.session.commit()
         flash(f"Order #{order.id} marked complete.", "success")
-    return redirect(url_for("store.manage_orders"))
+    return redirect(url_for("store.manage_orders", **_filter_args()))
 
 
 @store_bp.post("/manage/orders/<int:order_id>/refund")
-@roles_required("admin", "organizer")
+@roles_required("admin", "banker", "organizer")
 def refund_order(order_id):
     order = Order.query.filter_by(id=order_id).with_for_update().first()
     if order is None:
@@ -261,7 +412,7 @@ def refund_order(order_id):
         order.status = "refunded"
         db.session.commit()
         flash(f"Order #{order.id} refunded and balance restored.", "success")
-    return redirect(url_for("store.manage_orders"))
+    return redirect(url_for("store.manage_orders", **_filter_args()))
 
 
 def _as_utc(value):

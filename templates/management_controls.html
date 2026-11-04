@@ -2,7 +2,7 @@
 {% block title %}Management Controls · UBNETDEF{% endblock %}
 {% block content %}
 <section class="page-heading page-heading-row">
-  <div><p class="eyebrow">PLATFORM SETTINGS</p><h1>Management controls</h1><p>Choose public scoreboard options and restore archived boards.</p></div>
+  <div><p class="eyebrow">PLATFORM SETTINGS</p><h1>Management controls</h1><p>Choose scoreboard options, team check hints, and restore archived boards.</p></div>
   <div class="heading-actions"><a class="button button-secondary" href="{{ url_for('admin.dashboard') }}">Back to admin</a></div>
 </section>
 <form class="panel form-panel management-controls-form" method="post">
@@ -12,6 +12,12 @@
   <label class="checkbox-label">
     <input type="checkbox" name="scoreboard_competition_selector_enabled" {% if scoreboard_competition_selector_enabled %}checked{% endif %}>
     Show the active competition selector on the public scoreboard
+  </label>
+  <h2>Team score checks</h2>
+  <p class="muted">Hints suggest an area to investigate after a failed check without providing a complete fix.</p>
+  <label class="checkbox-label">
+    <input type="checkbox" name="score_check_hints_enabled" {% if score_check_hints_enabled %}checked{% endif %}>
+    Show recommended hints to teams when a score check fails
   </label>
   <div class="builder-actions"><button class="button button-primary" type="submit">Save controls</button></div>
 </form>

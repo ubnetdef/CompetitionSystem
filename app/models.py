@@ -44,6 +44,7 @@ class PlatformSetting(db.Model):
     scoreboard_competition_selector_enabled = db.Column(
         db.Boolean, nullable=False, default=False
     )
+    score_check_hints_enabled = db.Column(db.Boolean, nullable=False, default=False)
 
 
 class Team(db.Model):

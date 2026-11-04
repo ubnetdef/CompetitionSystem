@@ -12,6 +12,7 @@ from app import create_app
 from app.bank import balance_for
 from app.extensions import db
 from app.check_secrets import decrypt_credentials, encrypt_credentials
+from app.main import _recommended_score_check_action
 from cryptography.fernet import Fernet
 from app.models import (
     BankTransaction,
@@ -236,17 +237,23 @@ class PlatformTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"static/ubnetdef-logo.svg", response.data)
+        self.assertIn(b"Team tools", response.data)
+        self.assertNotIn(b"YOUR TEAM WORKSPACE", response.data)
+        self.assertNotIn(b"One login", response.data)
         self.assertIn(b"Live scoreboard", response.data)
         self.assertIn(b"Team bank", response.data)
         self.assertIn(b"Competition store", response.data)
         self.assertIn(b"Team settings", response.data)
         self.assertNotIn(b"Competition System", response.data)
 
-    def test_admin_can_assign_login_to_existing_unclaimed_team(self):
-        team = Team(name="Existing scoreboard team")
-        db.session.add(team)
+    def test_admin_creates_team_account_from_display_name(self):
+        old_team = Team(name="Old unassigned team")
+        db.session.add(old_team)
         db.session.commit()
         self.login("admin", "another-long-test-password")
+        page = self.client.get("/admin/users")
+        self.assertNotIn(b"Existing team", page.data)
+        self.assertIn(b'name="display_name"', page.data)
 
         response = self.client.post(
             "/admin/users",
@@ -254,13 +261,29 @@ class PlatformTests(unittest.TestCase):
                 "username": "existing-team-login",
                 "password": "secure-team-password",
                 "role": "team",
-                "team_id": str(team.id),
+                "display_name": "New scoreboard team",
+                "team_id": str(old_team.id),
             },
         )
 
         self.assertEqual(response.status_code, 302)
         user = User.query.filter_by(username="existing-team-login").one()
-        self.assertEqual(user.team_id, team.id)
+        self.assertEqual(user.team.name, "New scoreboard team")
+        self.assertIsNone(old_team.user)
+
+    def test_account_directory_can_sort_by_username(self):
+        zulu = User(username="zulu", role="banker")
+        zulu.set_password("zulu-test-password")
+        db.session.add(zulu)
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.get("/admin/users?sort=username&direction=asc")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(response.data.index(b'value="admin"'), response.data.index(b'value="blue"'))
+        self.assertLess(response.data.index(b'value="blue"'), response.data.index(b'value="zulu"'))
+        self.assertIn(b"Username", response.data)
 
     def test_bootstrap_cli_creates_one_admin_once(self):
         fresh_app = create_app(
@@ -1097,7 +1120,7 @@ class PlatformTests(unittest.TestCase):
         response = self.client.get(
             f"/admin/competitions/{competition.id}?edit_service={service.id}"
         )
-        self.assertIn(b"Unlock password for team updates", response.data)
+        self.assertIn(b"Teams can update this check", response.data)
         response = self.client.post(
             f"/admin/competitions/{competition.id}",
             data={
@@ -1110,13 +1133,12 @@ class PlatformTests(unittest.TestCase):
                 "host_key_fingerprint": "SHA256:ZmFrZS1maW5nZXJwcmludA",
                 "port": "2222",
                 "points": "1",
-                "team_editable_fields": "password",
                 "timeout_seconds": "3",
             },
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(service.check_config["credentials"], token)
-        self.assertEqual(service.team_editable_fields, ["password"])
+        self.assertEqual(service.team_editable_fields, [])
         self.assertEqual(service.port, 2222)
 
     def test_admin_edit_changes_only_ssh_password_or_username(self):
@@ -2204,6 +2226,18 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["competition"]["name"], "Spring Cup")
 
+    def test_engine_homepage_defaults_to_scoreboard(self):
+        competition = Competition(name="Homepage scoreboard", status="active")
+        db.session.add(competition)
+        db.session.commit()
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'class="scoreboard-page"', response.data)
+        self.assertIn(b"<h1>Homepage scoreboard</h1>", response.data)
+        self.assertNotIn(b'class="landing-page"', response.data)
+
     def test_scoreboard_shows_status_matrix_and_zero_score_teams(self):
         competition = Competition(name="Live Board", status="active")
         self.team.name = "Team02"
@@ -2437,20 +2471,23 @@ class PlatformTests(unittest.TestCase):
         self.login("admin", "another-long-test-password")
         response = self.client.post(
             "/admin/management-controls",
-            data={"scoreboard_competition_selector_enabled": "on"},
+            data={
+                "scoreboard_competition_selector_enabled": "on",
+                "score_check_hints_enabled": "on",
+            },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(
-            db.session.get(PlatformSetting, 1).scoreboard_competition_selector_enabled
-        )
+        settings = db.session.get(PlatformSetting, 1)
+        self.assertTrue(settings.scoreboard_competition_selector_enabled)
+        self.assertTrue(settings.score_check_hints_enabled)
         response = self.client.get(f"/scoreboard?competition={second.id}")
         self.assertIn(b"<h1>B Optional Board</h1>", response.data)
         self.assertIn(b'name="competition"', response.data)
 
         self.client.post("/admin/management-controls", data={})
-        self.assertFalse(
-            db.session.get(PlatformSetting, 1).scoreboard_competition_selector_enabled
-        )
+        settings = db.session.get(PlatformSetting, 1)
+        self.assertFalse(settings.scoreboard_competition_selector_enabled)
+        self.assertFalse(settings.score_check_hints_enabled)
 
     def test_archived_scoreboard_is_only_listed_in_management_controls(self):
         competition = Competition(
@@ -2533,7 +2570,6 @@ class PlatformTests(unittest.TestCase):
             check_config={"credentials": encrypt_credentials("service-user", "base-password")},
             protocol="ssh",
             port=22,
-            team_editable_fields=["password"],
         )
         other_service = Service(
             competition=competition,
@@ -2609,6 +2645,8 @@ class PlatformTests(unittest.TestCase):
             decrypt_credentials(own_override.credentials_override),
             ("service-user", "team-password"),
         )
+        self.assertTrue(self.team_user.check_password("a-long-test-password"))
+        self.assertFalse(self.team_user.check_password("team-password"))
         self.assertIsNone(
             TeamServiceConfig.query.filter_by(
                 team_id=other_team.id,
@@ -2650,7 +2688,176 @@ class PlatformTests(unittest.TestCase):
         self.assertIn(b"Windows WinRM", response.data)
         self.assertNotIn(b"Ubuntu SSH", response.data)
 
-    def test_scoring_uses_only_unlocked_team_credential_values(self):
+    def test_team_checks_show_failure_details_and_optional_hints(self):
+        competition = Competition(name="Team check details", status="active")
+        group = HostGroup(competition=competition, name="Ubuntu")
+        service = Service(
+            competition=competition,
+            host_group=group,
+            name="Ubuntu SSH",
+            check_type="ssh",
+            check_config={
+                "credentials": encrypt_credentials("monitor", "check-secret"),
+            },
+            protocol="ssh",
+            port=22,
+            points=3,
+        )
+        read_only_service = Service(
+            competition=competition,
+            host_group=group,
+            name="Ubuntu Ping",
+            check_type="ping",
+            protocol="icmp",
+            port=0,
+        )
+        host = Host(
+            competition=competition,
+            team=self.team,
+            host_group=group,
+            address="192.0.2.10",
+        )
+        score_round = ScoreRound(
+            competition=competition,
+            number=1,
+            status="completed",
+        )
+        competition.teams.append(self.team)
+        db.session.add_all(
+            (competition, group, service, read_only_service, host, score_round)
+        )
+        db.session.flush()
+        db.session.add(
+            ScoreResult(
+                score_round=score_round,
+                team=self.team,
+                service=service,
+                passed=False,
+                points=0,
+                details="SSH authentication was rejected by the server.",
+            )
+        )
+        db.session.commit()
+
+        self.login("blue", "a-long-test-password")
+        response = self.client.get(f"/team/checks?competition={competition.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"SSH authentication was rejected by the server.", response.data)
+        self.assertIn(b"192.0.2.10", response.data)
+        self.assertIn(b"SSH", response.data)
+        self.assertIn(b"22", response.data)
+        self.assertIn(b"Latest result", response.data)
+        self.assertIn(b"Check properties", response.data)
+        self.assertIn(b"Scored username", response.data)
+        self.assertIn(b"monitor", response.data)
+        self.assertIn(b'class="team-check-panels"', response.data)
+        self.assertIn(b"team-check-credential-empty", response.data)
+        self.assertNotIn(b"UNLOCKED CREDENTIALS", response.data)
+        self.assertNotIn(b"<details", response.data)
+        self.assertNotIn(
+            b"This changes the password used by this check, not your UBNETDEF account password.",
+            response.data,
+        )
+        self.assertNotIn(b"check-secret", response.data)
+        self.assertNotIn(b"Suggested next step", response.data)
+
+        self.client.post("/logout")
+        self.login("admin", "another-long-test-password")
+        response = self.client.post(
+            "/admin/management-controls",
+            data={"score_check_hints_enabled": "on"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(db.session.get(PlatformSetting, 1).score_check_hints_enabled)
+
+        self.client.post("/logout")
+        self.login("blue", "a-long-test-password")
+        response = self.client.get(f"/team/checks?competition={competition.id}")
+
+        self.assertIn(b"Suggested next step", response.data)
+        self.assertIn(b"Review the account and authentication method", response.data)
+
+    def test_team_check_competition_picker_requires_multiple_active_competitions(self):
+        first = Competition(name="One Active Board", status="active")
+        first.teams.append(self.team)
+        db.session.add(first)
+        db.session.commit()
+
+        self.login("blue", "a-long-test-password")
+        response = self.client.get("/team/checks")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'<label for="team-check-competition">Competition</label>', response.data)
+        self.assertNotIn(b"One Active Board", response.data)
+
+        second = Competition(name="Another Active Board", status="active")
+        second.teams.append(self.team)
+        db.session.add(second)
+        db.session.commit()
+        response = self.client.get("/team/checks")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<label for="team-check-competition">Competition</label>', response.data)
+        self.assertIn(b"One Active Board", response.data)
+        self.assertIn(b"Another Active Board", response.data)
+
+    def test_admin_team_picker_is_aligned_with_team_checks_heading(self):
+        competition = Competition(name="Admin Check Board", status="active")
+        competition.teams.append(self.team)
+        db.session.add(competition)
+        db.session.commit()
+
+        self.login("admin", "another-long-test-password")
+        response = self.client.get("/team/checks")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"<h1>Team Checks</h1>", response.data)
+        self.assertIn(b'id="team-check-team"', response.data)
+        self.assertIn(
+            f'name="competition" value="{competition.id}"'.encode(),
+            response.data,
+        )
+        heading_start = response.data.index(
+            b'<section class="page-heading page-heading-row">'
+        )
+        heading_end = response.data.index(b"</section>", heading_start)
+        self.assertLess(
+            response.data.index(b"team-check-team-picker"),
+            heading_end,
+        )
+
+    def test_failure_hints_follow_error_details(self):
+        examples = (
+            (
+                "ssh",
+                "SSH authentication was rejected by the server.",
+                "Review the account and authentication method used by this check.",
+            ),
+            (
+                "ldap",
+                "LDAP connection failed: socket connection error while opening: timed out",
+                "Check whether the service is reachable and can respond within its configured timeout.",
+            ),
+            (
+                "http",
+                "Expected HTTP 200; received HTTP 503.",
+                "Compare the check's expected response with what the service currently returns.",
+            ),
+            (
+                "ftp",
+                "FTPS TLS certificate verification failed.",
+                "Review the encrypted connection and certificate settings used by this check.",
+            ),
+        )
+        for check_type, details, expected_hint in examples:
+            with self.subTest(check_type=check_type, details=details):
+                self.assertEqual(
+                    _recommended_score_check_action(check_type, details),
+                    expected_hint,
+                )
+
+    def test_scoring_uses_team_password_overrides(self):
         competition = Competition(name="Team Credential Scoring", status="active")
         group = HostGroup(competition=competition, name="Ubuntu")
         other_team = Team(name="Red Team")
@@ -2668,7 +2875,6 @@ class PlatformTests(unittest.TestCase):
             check_config={"credentials": encrypt_credentials("service-user", "base-password")},
             protocol="ssh",
             port=22,
-            team_editable_fields=["password"],
         )
         hosts = (
             Host(competition=competition, team=self.team, host_group=group, address="192.0.2.10"),

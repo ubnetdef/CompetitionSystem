@@ -253,14 +253,46 @@ td strong { color: var(--ink); } td small { display: block; }
 .scoreboard-empty-note { margin: 12px 0 0; text-align: center; color: var(--muted); font-size: 12px; }
 .scoreboard-no-competition { margin: auto; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
-.team-check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
-.team-check-card { padding: 20px; }
+.team-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.team-check-card.panel { min-width: 0; padding: 16px; }
+.team-check-card .card-heading { align-items: flex-start; gap: 8px; }
 .team-check-card .eyebrow { margin-bottom: 5px; }
 .team-check-card h3 { margin: 0; font-size: 16px; }
-.team-check-form { display: grid; gap: 8px; margin-top: 16px; }
-.team-check-form label { margin: 4px 0 -4px; color: var(--ink); font-size: 11px; font-weight: 700; }
-.team-check-form .button { justify-self: start; margin-top: 4px; }
+.team-check-card .card-heading .pill { flex: 0 0 auto; }
+.team-check-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.team-check-data-panel { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); }
+.team-check-data-panel h4 { margin: 0 0 8px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.check-result-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.check-result-badge { padding: 4px 8px; border-radius: 5px; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.check-result-passed { color: var(--positive); background: var(--positive-surface); }
+.check-result-failed { color: var(--danger); background: var(--danger-surface); }
+.check-result-round { color: var(--muted); font-size: 10px; }
+.check-no-result { margin: 0; color: var(--muted); font-size: 11px; }
+.check-failure-detail { margin-top: 10px; padding: 9px; border-left: 3px solid var(--danger); border-radius: 4px; background: var(--danger-surface); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.check-failure-detail strong { color: var(--danger); }
+.check-failure-detail p { margin: 4px 0 0; }
+.check-basic-info { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; }
+.check-basic-info > div { display: grid; grid-template-columns: minmax(76px, .8fr) minmax(0, 1.2fr); gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.check-basic-info > div:last-child { border-bottom: 0; }
+.check-basic-info dt { color: var(--muted); font-size: 9px; font-weight: 750; }
+.check-basic-info dd { margin: 0; color: var(--ink); font-size: 10px; text-align: right; overflow-wrap: anywhere; }
+.team-check-bottom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.team-check-guidance { display: flex; min-width: 0; align-items: stretch; }
+.score-check-hint { display: flex; flex-direction: column; justify-content: center; width: 100%; margin: 0; padding: 14px; border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface-raised); color: var(--ink); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.score-check-hint strong { margin-bottom: 5px; color: var(--accent-hover); }
+.team-check-credentials { display: flex; min-width: 0; align-items: center; justify-content: flex-end; }
+.team-check-card .flash { margin: 8px 0 0; }
+.team-check-form { display: grid; width: 100%; gap: 8px; margin: 0; }
+.team-check-credential-field { display: grid; min-width: 0; gap: 4px; }
+.team-check-form label { color: var(--ink); font-size: 10px; font-weight: 700; }
+.team-check-credential-field input { width: 100%; min-width: 0; min-height: 34px; padding: 7px; font-size: 10px; }
+.team-check-form .button { justify-self: end; margin-top: 0; }
+.check-credential-note { margin: 0 0 4px; font-size: 10px; }
+.team-check-credential-empty { display: flex; width: 100%; min-height: 100%; align-items: center; justify-content: center; padding: 16px; text-align: center; }
 .team-check-filters { max-width: 760px; }
+.team-check-team-picker { display: flex; width: min(360px, 42vw); min-width: 250px; align-items: center; gap: 10px; margin: 0; }
+.team-check-team-picker label { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.team-check-team-picker select { width: auto; min-width: 0; flex: 1; }
 .team-check-section { margin-top: 28px; }
 .team-check-section .section-heading { margin-bottom: 12px; }
 .team-check-section .flash { margin: 12px 0 0; }
@@ -317,11 +349,16 @@ td strong { color: var(--ink); } td small { display: block; }
   .split-layout, .auth-layout { grid-template-columns: 1fr; }.auth-layout { gap: 20px; min-height: auto; padding: 30px 0; }.auth-aside h1 { font-size: 38px; }
   .store-grid, .card-grid { grid-template-columns: 1fr; }
   .page-heading-row { align-items: start; flex-direction: column; }.heading-actions { width: 100%; }
+  .team-check-team-picker { width: 100%; min-width: 0; align-self: stretch; }
   .status-panel { align-items: start; flex-direction: column; }
   .stat-grid { gap: 8px; }.stat-card { padding: 14px; }.stat-card strong { font-size: 25px; }
   .builder-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .builder-review-grid { grid-template-columns: repeat(2, 1fr); }
+  .team-check-panels { grid-template-columns: 1fr; }
   .footer { padding: 20px; }
+}
+@media (max-width: 700px) {
+  .team-check-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
   .topbar { min-height: 62px; }.topbar nav { overflow-x: auto; }.brand-logo { width: 138px; }
@@ -333,6 +370,8 @@ td strong { color: var(--ink); } td small { display: block; }
   .builder-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .builder-tab { min-height: 54px; padding: 8px; font-size: 10px; }
   .builder-review-grid { grid-template-columns: 1fr; }
+  .team-check-bottom { grid-template-columns: 1fr; }
+  .team-check-grid { grid-template-columns: 1fr; }
   .builder-host-form { align-items: stretch; flex-direction: column; }
   .builder-host-form input { width: 100%; }
 }

@@ -16,9 +16,11 @@
       <option value="team">Team account</option><option value="banker">Bank operator</option>
       {% if is_admin %}<option value="organizer">Competition organizer</option><option value="admin">Administrator</option>{% endif %}
     </select>
-    <label for="team_id">Existing team <span class="optional">(optional)</span></label>
-    <select id="team_id" name="team_id"><option value="">Create a new team instead</option>{% for team in unassigned_teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select>
-    <label for="team_name">New team name <span class="optional">(if no existing team is selected)</span></label><input id="team_name" name="team_name" maxlength="120">
+    <div id="team-display-name-field">
+      <label for="display_name">Display name</label>
+      <input id="display_name" name="display_name" maxlength="120" required>
+      <small>For team accounts, this is the name shown on the scoreboard.</small>
+    </div>
     <button class="button button-primary" type="submit">Create account</button>
   </form>
   <div class="panel info-panel"><p class="eyebrow">ROLE GUIDE</p><h2>Shared access</h2>
@@ -31,9 +33,14 @@
   </div>
 </section>
 <section class="section-block">
-  <div class="section-heading"><div><p class="eyebrow">ACCOUNT DIRECTORY</p><h2>{{ users|length }} accounts</h2></div></div>
+  <div class="section-heading"><div><p class="eyebrow">ACCOUNT DIRECTORY</p><h2>{{ users|length }} accounts</h2><p class="muted">Select a column heading to sort.</p></div></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Username</th><th>Role</th><th>Team</th><th>Status</th><th>Reset password</th><th>Account actions</th></tr></thead>
+    <thead><tr>
+      {% for key, label in [('username', 'Username'), ('role', 'Role'), ('team', 'Team'), ('status', 'Status')] %}
+        <th><a href="{{ url_for('admin.users', sort=key, direction='desc' if sort_by == key and sort_direction == 'asc' else 'asc') }}">{{ label }}{% if sort_by == key %} {{ '↑' if sort_direction == 'asc' else '↓' }}{% endif %}</a></th>
+      {% endfor %}
+      <th>Reset password</th><th>Account actions</th>
+    </tr></thead>
     <tbody>{% for user in users %}
       <tr>
         <td><form class="inline-form username-edit-form" method="post" action="{{ url_for('admin.update_username', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="username" value="{{ user.username }}" maxlength="80" aria-label="Username for {{ user.username }}" required><button class="button button-secondary button-small" type="submit">Save</button></form></td><td>{{ user.role|title }}</td><td>{{ user.team.name if user.team else "—" }}</td>
@@ -44,4 +51,18 @@
     {% else %}<tr><td colspan="6" class="table-empty">No accounts have been created.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
+<script>
+  (() => {
+    const role = document.getElementById("role");
+    const field = document.getElementById("team-display-name-field");
+    const displayName = document.getElementById("display_name");
+    const updateDisplayNameVisibility = () => {
+      const isTeam = role.value === "team";
+      field.hidden = !isTeam;
+      displayName.required = isTeam;
+    };
+    role.addEventListener("change", updateDisplayNameVisibility);
+    updateDisplayNameVisibility();
+  })();
+</script>
 {% endblock %}

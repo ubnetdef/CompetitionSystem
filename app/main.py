@@ -6,7 +6,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
-from .check_catalog import TEAM_CREDENTIAL_CHECK_TYPES, TEAM_EDITABLE_CREDENTIAL_FIELDS
+from .check_catalog import TEAM_CREDENTIAL_CHECK_TYPES, team_editable_fields
 from .check_secrets import decrypt_credentials, encrypt_credentials
 from .extensions import db
 from .models import (
@@ -14,7 +14,6 @@ from .models import (
     Host,
     HostGroup,
     PlatformSetting,
-    Product,
     ScoreResult,
     ScoreRound,
     Service,
@@ -25,6 +24,84 @@ from .security import team_required
 from .utils import address_matches_ranges, valid_host
 
 main_bp = Blueprint("main", __name__)
+
+_SCORE_CHECK_HINTS = {
+    "dns": "Review name resolution and the record used by this check.",
+    "ftp": "Review secure file-transfer availability, authentication, and the read target.",
+    "http": "Review the web service's availability and compare its response with the configured check.",
+    "ldap": "Review directory reachability, secure transport, and bind settings.",
+    "ping": "Review host reachability and whether ICMP is permitted.",
+    "sql": "Review database reachability, secure transport, and access to the configured database.",
+    "ssh": "Review the host's SSH availability and authentication configuration.",
+    "tcp": "Review the service listening on the configured port.",
+    "winrm": "Review the remote-management service, transport security, and authentication setup.",
+}
+
+_SCORE_CHECK_FAILURE_HINTS = (
+    (
+        ("certificate", "tls", "ssl", "handshake"),
+        "Review the encrypted connection and certificate settings used by this check.",
+    ),
+    (
+        ("timed out", "timeout"),
+        "Check whether the service is reachable and can respond within its configured timeout.",
+    ),
+    (
+        ("host-key", "host key", "fingerprint"),
+        "Review whether the host identity matches what this check expects.",
+    ),
+    (
+        ("authentication", "credentials", "password", "login", "bind"),
+        "Review the account and authentication method used by this check.",
+    ),
+    (
+        ("dns lookup", "name resolution", "configured name does not exist"),
+        "Review the name being queried and the DNS record returned for it.",
+    ),
+    (
+        (
+            "expected http",
+            "received http",
+            "expected output",
+            "expected value",
+            "expected text",
+            "expected answer",
+            "expected range",
+            "unexpected result",
+            "did not contain",
+            "not found",
+            "not present",
+        ),
+        "Compare the check's expected response with what the service currently returns.",
+    ),
+    (
+        ("search failed", "result limits", "size limit"),
+        "Review the lookup scope and whether expected entries are returned within the configured limits.",
+    ),
+    (
+        ("permission", "forbidden", "access denied"),
+        "Review whether the configured account has the access required for this check.",
+    ),
+    (
+        ("connection", "socket", "refused", "unreachable", "no route"),
+        "Review the target address and whether the service is available at the configured protocol and port.",
+    ),
+    (
+        ("exceeds the 65,536-byte", "scoring limit"),
+        "Review whether the configured file or response fits within the check's read limit.",
+    ),
+)
+
+
+def _recommended_score_check_action(check_type, failure_details):
+    details = (failure_details or "").casefold()
+    for indicators, action in _SCORE_CHECK_FAILURE_HINTS:
+        if any(indicator in details for indicator in indicators):
+            return action
+    return _SCORE_CHECK_HINTS.get(
+        check_type,
+        "Review the service configuration and compare it with the reported failure.",
+    )
 
 
 def site_links():
@@ -57,12 +134,7 @@ def home():
             return redirect_to_site("store", "store.catalog")
         return redirect(url_for("main.dashboard"))
 
-    competitions = Competition.query.filter_by(
-        status="active",
-        is_archived=False,
-    ).order_by(Competition.name).all()
-    products = Product.query.filter_by(published=True).order_by(Product.name).limit(4).all()
-    return render_template("landing.html", competitions=competitions, products=products)
+    return _render_scoreboard_page()
 
 
 @main_bp.route("/dashboard")
@@ -80,6 +152,10 @@ def dashboard():
 
 @main_bp.route("/scoreboard")
 def scoreboard():
+    return _render_scoreboard_page()
+
+
+def _render_scoreboard_page():
     query = Competition.query.filter_by(status="active", is_archived=False)
     competitions = query.order_by(Competition.name).all()
     settings = db.session.get(PlatformSetting, 1)
@@ -325,8 +401,9 @@ def team_checks():
         }
         if service.host_group_id not in host_group_ids:
             abort(404)
-        editable_fields = set(service.team_editable_fields or []) & set(
-            TEAM_EDITABLE_CREDENTIAL_FIELDS
+        editable_fields = team_editable_fields(
+            service.check_type,
+            service.team_editable_fields,
         )
         if not editable_fields:
             flash("This check has no fields unlocked for team editing.", "error")
@@ -426,6 +503,11 @@ def team_checks():
             team_id=selected_team.id,
         ).all()
         hosts = sorted(host_rows, key=lambda host: (host.host_group.name if host.host_group else "").casefold())
+        host_by_group = {host.host_group_id: host for host in hosts}
+        latest_results = _latest_team_check_results(
+            selected_competition.id,
+            selected_team.id,
+        )
         host_group_ids = {host.host_group_id for host in hosts}
         service_host_groups = host_group_ids - {None}
         service_scope = Service.host_group_id.in_(service_host_groups)
@@ -436,26 +518,24 @@ def team_checks():
             service_scope,
         )
         for service in service_query.order_by(Service.name).all():
-            fields = (
-                set(service.team_editable_fields or [])
-                & set(TEAM_EDITABLE_CREDENTIAL_FIELDS)
-                if service.check_type in TEAM_CREDENTIAL_CHECK_TYPES
-                else set()
+            fields = team_editable_fields(
+                service.check_type,
+                service.team_editable_fields,
             )
             configuration = (
                 TeamServiceConfig.query.filter_by(
                     team_id=selected_team.id,
                     service_id=service.id,
                 ).first()
-                if fields
+                if service.check_type in TEAM_CREDENTIAL_CHECK_TYPES
                 else None
             )
             username = ""
             credentials_available = True
-            if "username" in fields:
+            if service.check_type in TEAM_CREDENTIAL_CHECK_TYPES:
                 token = (
                     configuration.credentials_override
-                    if configuration
+                    if configuration and configuration.credentials_override
                     else (service.check_config or {}).get("credentials")
                 )
                 credentials = _decrypt_team_credentials(
@@ -465,15 +545,28 @@ def team_checks():
                     credentials_available = False
                 else:
                     username = credentials[0]
+            latest_result = latest_results.get(service.id)
             services.append(
                 {
                     "service": service,
                     "editable_fields": fields,
                     "username": username,
+                    "show_scored_username": (
+                        service.check_type in TEAM_CREDENTIAL_CHECK_TYPES
+                    ),
                     "credentials_available": credentials_available,
+                    "host": host_by_group.get(service.host_group_id),
+                    "latest_result": latest_result,
+                    "recommended_action": _recommended_score_check_action(
+                        service.check_type,
+                        latest_result.details
+                        if latest_result and not latest_result.passed
+                        else "",
+                    ),
                 }
             )
 
+    settings = db.session.get(PlatformSetting, 1)
     return render_template(
         "team_checks.html",
         competitions=competitions,
@@ -483,6 +576,9 @@ def team_checks():
         services=services,
         hosts=hosts,
         is_team=current_user.role == "team",
+        score_check_hints_enabled=bool(
+            settings and settings.score_check_hints_enabled
+        ),
     )
 
 
@@ -505,6 +601,36 @@ def _team_checks_redirect(competition, team):
     if current_user.role != "team":
         values["team"] = team.id
     return redirect(url_for("main.team_checks", **values))
+
+
+def _latest_team_check_results(competition_id, team_id):
+    latest_rounds = (
+        db.session.query(
+            ScoreResult.service_id.label("service_id"),
+            func.max(ScoreRound.number).label("round_number"),
+        )
+        .join(ScoreRound, ScoreResult.round_id == ScoreRound.id)
+        .filter(
+            ScoreRound.competition_id == competition_id,
+            ScoreResult.team_id == team_id,
+        )
+        .group_by(ScoreResult.service_id)
+        .subquery()
+    )
+    results = (
+        ScoreResult.query.join(ScoreRound, ScoreResult.round_id == ScoreRound.id)
+        .join(
+            latest_rounds,
+            (ScoreResult.service_id == latest_rounds.c.service_id)
+            & (ScoreRound.number == latest_rounds.c.round_number),
+        )
+        .filter(
+            ScoreRound.competition_id == competition_id,
+            ScoreResult.team_id == team_id,
+        )
+        .all()
+    )
+    return {result.service_id: result for result in results}
 
 
 @main_bp.post("/scoreboard/hosts/<int:host_id>")
