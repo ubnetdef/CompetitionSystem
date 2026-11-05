@@ -111,8 +111,17 @@ button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .builder-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 20px; }
 .builder-actions form, .builder-row-actions form { margin: 0; }
 .builder-row-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.ip-template-form { margin-top: 18px; }
+.ip-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.ip-template-card { min-width: 0; margin: 0; }
+.ip-template-card h3 { margin-top: 0; }
+.ip-template-actions { justify-content: flex-end; }
 .builder-host-form { flex-wrap: wrap; }
 .builder-host-form input { width: 180px; min-width: 135px; }
+.builder-host-table { width: max-content; min-width: 100%; table-layout: auto; }
+.builder-host-table th:not(:first-child), .builder-host-table td:not(:first-child) { min-width: 245px; }
+.builder-host-table td:first-child { min-width: 145px; white-space: nowrap; }
+.builder-host-address { width: 100% !important; min-width: 0 !important; font-family: var(--font-mono, monospace); font-variant-numeric: tabular-nums; }
 .check-type-fieldset { margin: 20px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 9px; }
 .check-type-fieldset legend { padding: 0 6px; color: var(--ink); font-size: 12px; font-weight: 750; }
 .check-type-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 3px 14px; }
@@ -391,6 +400,7 @@ td strong { color: var(--ink); } td small { display: block; }
   .footer { font-size: 10px; }
   .builder-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .builder-tab { min-height: 54px; padding: 8px; font-size: 10px; }
+  .ip-template-grid { grid-template-columns: 1fr; }
   .builder-review-grid { grid-template-columns: 1fr; }
   .team-check-bottom { grid-template-columns: 1fr; }
   .team-check-grid { grid-template-columns: 1fr; }

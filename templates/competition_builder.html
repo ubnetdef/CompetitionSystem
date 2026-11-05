@@ -26,7 +26,7 @@
 <nav class="builder-tabs" aria-label="Scoreboard setup steps">
   {% for step in steps %}
     {% if loop.index0 <= max_step_index %}
-      <a class="builder-tab {% if step == active_step %}is-active{% endif %} {% if progress.get(step, false) %}is-complete{% endif %}"
+      <a class="builder-tab ip-template-nav {% if step == active_step %}is-active{% endif %} {% if progress.get(step, false) %}is-complete{% endif %}"
          href="{{ url_for('admin.competition_builder', competition_id=competition.id, step=step) }}"
          {% if step == active_step %}aria-current="step"{% endif %}>
         <span class="builder-tab-index">
@@ -131,39 +131,46 @@
   <h2>Set one address pattern per device group</h2>
   <p class="muted">Configure each group's IPv4 pattern and ending octet. For example, a pattern of <code>10.{index}.1</code> with ending octet <code>20</code> generates addresses from <code>10.{index}.1.20</code>. Team indexes are assigned in ascending team-ID order.</p>
 </section>
-{% for group in host_groups %}
-  {% set pattern_parts = group.ip_template.address_template.rsplit('.', 1) if group.ip_template else ['10.{index}.1', '1'] %}
-  <section class="panel form-panel section-block">
-    <h3>{{ group.name }}</h3>
-    <form method="post">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="action" value="save-group-template">
-      <input type="hidden" name="step" value="templates">
-      <input type="hidden" name="host_group_id" value="{{ group.id }}">
-      <div class="form-row">
-        <div>
-          <label for="address_prefix_{{ group.id }}">IPv4 pattern before ending octet</label>
-          <input id="address_prefix_{{ group.id }}" name="address_prefix" value="{{ pattern_parts[0] }}" placeholder="10.{index}.1" required pattern="[^{}]*\{index\}[^{}]*">
+{% if host_groups %}
+<form class="ip-template-form" method="post" data-ip-template-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="save-group-templates">
+  <input type="hidden" name="step" value="templates">
+  <input type="hidden" name="redirect_step" value="templates">
+  <div class="ip-template-grid">
+    {% for group in host_groups %}
+      {% set pattern_parts = group.ip_template.address_template.rsplit('.', 1) if group.ip_template else ['10.{index}.1', '1'] %}
+      <article class="panel form-panel ip-template-card">
+        <h3>{{ group.name }}</h3>
+        <input type="hidden" name="host_group_ids" value="{{ group.id }}">
+        <div class="form-row">
+          <div>
+            <label for="address_prefix_{{ group.id }}">IPv4 pattern before ending octet</label>
+            <input id="address_prefix_{{ group.id }}" name="address_prefix_{{ group.id }}" value="{{ pattern_parts[0] }}" placeholder="10.{index}.1" required pattern="[^{}]*\{index\}[^{}]*">
+          </div>
+          <div>
+            <label for="ending_octet_{{ group.id }}">Ending IP octet</label>
+            <input id="ending_octet_{{ group.id }}" name="ending_octet_{{ group.id }}" type="number" min="0" max="255" value="{{ pattern_parts[1] }}" required>
+          </div>
         </div>
-        <div>
-          <label for="ending_octet_{{ group.id }}">Ending IP octet</label>
-          <input id="ending_octet_{{ group.id }}" name="ending_octet" type="number" min="0" max="255" value="{{ pattern_parts[1] }}" required>
+        <div class="form-row">
+          <div><label for="index_start_{{ group.id }}">Starting index</label><input id="index_start_{{ group.id }}" name="index_start_{{ group.id }}" type="number" min="0" max="255" value="{{ group.ip_template.index_start if group.ip_template else 1 }}" required></div>
+          <div><label for="index_end_{{ group.id }}">Ending index</label><input id="index_end_{{ group.id }}" name="index_end_{{ group.id }}" type="number" min="0" max="255" value="{{ group.ip_template.index_end if group.ip_template else 254 }}" required></div>
         </div>
-      </div>
-      <div class="form-row">
-        <div><label for="index_start_{{ group.id }}">Starting index</label><input id="index_start_{{ group.id }}" name="index_start" type="number" min="0" max="255" value="{{ group.ip_template.index_start if group.ip_template else 1 }}" required></div>
-        <div><label for="index_end_{{ group.id }}">Ending index</label><input id="index_end_{{ group.id }}" name="index_end" type="number" min="0" max="255" value="{{ group.ip_template.index_end if group.ip_template else 254 }}" required></div>
-      </div>
-      <div class="builder-actions"><button class="button button-primary" type="submit">{{ "Save IP template" if group.ip_template else "Set IP template" }}</button></div>
-      {% if group.ip_template %}<p class="form-footnote">Current result: <code>{{ group.ip_template.address_template }}</code>, indexes {{ group.ip_template.index_start }}–{{ group.ip_template.index_end }}.</p>{% endif %}
-    </form>
-  </section>
+        {% if group.ip_template %}<p class="form-footnote">Current result: <code>{{ group.ip_template.address_template }}</code>, indexes {{ group.ip_template.index_start }}–{{ group.ip_template.index_end }}.</p>{% endif %}
+      </article>
+    {% endfor %}
+  </div>
+  <div class="builder-actions ip-template-actions">
+    <button class="button button-primary" type="submit">Save all IP templates</button>
+  </div>
+</form>
 {% else %}
   <p class="muted section-block">Create device groups before configuring their IP templates.</p>
-{% endfor %}
+{% endif %}
 <section class="section-block">
   <div class="builder-actions">
-    {% if progress.templates %}<a class="button button-primary" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='teams') }}">Continue to teams and hosts</a>{% else %}<p class="muted">Set a valid address template and index range for every device group.</p>{% endif %}
+    {% if progress.templates %}<a class="button button-primary ip-template-nav" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='teams') }}">Continue to teams and hosts</a>{% else %}<p class="muted">Set a valid address template and index range for every device group.</p>{% endif %}
   </div>
 </section>
 
@@ -186,7 +193,7 @@
   <div class="section-heading"><div><p class="eyebrow">HOST QUICK CREATE</p><h2>Team device addresses</h2></div><span class="muted">Generated from each group's assigned IP template</span></div>
   {% if teams and host_groups %}
     <div class="table-wrap">
-      <table><thead><tr><th>Team</th>{% for group in host_groups %}<th>{{ group.name }}<small class="table-subtext">{{ group.ip_template.address_template }}</small></th>{% endfor %}</tr></thead><tbody>
+      <table class="builder-host-table"><thead><tr><th>Team</th>{% for group in host_groups %}<th>{{ group.name }}<small class="table-subtext">{{ group.ip_template.address_template }}</small></th>{% endfor %}</tr></thead><tbody>
         {% for team in teams %}
           <tr><td><strong>{{ team.name }}</strong></td>
             {% for group in host_groups %}
@@ -195,7 +202,7 @@
                 {% if host %}
                   <form class="inline-form builder-host-form" method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="save-host-address"><input type="hidden" name="step" value="teams"><input type="hidden" name="host_id" value="{{ host.id }}">
-                    <input aria-label="{{ team.name }} {{ group.name }} IPv4 address" name="address" value="{{ host.address }}" required>
+                    <input class="builder-host-address" aria-label="{{ team.name }} {{ group.name }} IPv4 address" name="address" value="{{ host.address }}" required>
                     <details class="builder-host-permissions">
                       <summary>Team edit access</summary>
                       <label class="checkbox-label"><input type="checkbox" name="team_can_edit_address" {% if host.team_can_edit_address %}checked{% endif %}> Allow team to change address</label>
@@ -224,6 +231,23 @@
   <h2>Configure score checks</h2>
   <p class="muted">Checks are templates for a device group. Configure a check once, and it runs against that group’s matching host for every enrolled team.</p>
 </section>
+{% if missing_check_templates %}
+<section class="section-block" id="required-check-templates">
+  <div class="section-heading">
+    <div><p class="eyebrow">REQUIRED CONFIGURATION</p><h2>{{ missing_check_templates|length }} check templates to configure</h2></div>
+  </div>
+  {% if editing_service %}
+    <p class="muted">Save or cancel the current check edit below before configuring the remaining required templates.</p>
+  {% else %}
+    <p class="muted">Configure each selected check type for its device group. The builder will unlock review after every required template is saved.</p>
+    {% for required_group, required_check_type in missing_check_templates %}
+      {% set form_id = "required-check-" ~ required_group.id ~ "-" ~ required_check_type %}
+      {% set required_template = true %}
+      {% include "partials/service_check_form.html" %}
+    {% endfor %}
+  {% endif %}
+</section>
+{% endif %}
 <section class="section-block">
   <div class="section-heading">
     <div><p class="eyebrow">DEVICE GROUP PROGRESS</p><h2>Check setup status</h2></div>
@@ -264,7 +288,7 @@
                   {% endif %}
                 </span>
                 {% if item.status == "missing" %}
-                  <a class="button button-secondary button-small" href="#required-check-{{ group_progress.group.id }}-{{ item.check_type }}">Configure</a>
+                  {% if editing_service %}<span class="muted">Configure after editing</span>{% else %}<a class="button button-secondary button-small" href="#required-check-{{ group_progress.group.id }}-{{ item.check_type }}">Configure</a>{% endif %}
                 {% elif item.status == "warning" %}
                   <a class="button button-secondary button-small" href="{{ url_for('admin.competition_builder', competition_id=competition.id, step='checks', edit_service=item.service.id) }}#service-form">Review</a>
                 {% endif %}
@@ -280,19 +304,6 @@
     {% endfor %}
   </div>
 </section>
-{% if missing_check_templates %}
-<section class="section-block" id="required-check-templates">
-  <div class="section-heading">
-    <div><p class="eyebrow">REQUIRED CONFIGURATION</p><h2>{{ missing_check_templates|length }} check templates to configure</h2></div>
-  </div>
-  <p class="muted">Configure each selected check type for its device group. The builder will unlock review after every required template is saved.</p>
-  {% for required_group, required_check_type in missing_check_templates %}
-    {% set form_id = "required-check-" ~ required_group.id ~ "-" ~ required_check_type %}
-    {% set required_template = true %}
-    {% include "partials/service_check_form.html" %}
-  {% endfor %}
-</section>
-{% endif %}
 {% if editing_service %}{% include "partials/service_check_form.html" %}{% endif %}
 <section class="section-block">
   <div class="section-heading"><div><p class="eyebrow">CONFIGURED CHECKS</p><h2>{{ services|length }} score checks</h2></div></div>
@@ -344,4 +355,5 @@
 </section>
 {% endif %}
 {% if active_step == "checks" %}<script src="{{ url_for('static', filename='check-form.js') }}" defer></script>{% endif %}
+{% if active_step == "templates" %}<script src="{{ url_for('static', filename='ip-templates.js') }}" defer></script>{% endif %}
 {% endblock %}

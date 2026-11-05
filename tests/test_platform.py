@@ -1084,6 +1084,99 @@ class PlatformTests(unittest.TestCase):
         self.assertNotIn(b"Ubuntu1 IPs", response.data)
         self.assertIn(b"10.{index}.1.1", response.data)
 
+    def test_builder_saves_all_ip_templates_together_without_partial_updates(self):
+        competition = Competition(name="Bulk IP Templates")
+        first_group = HostGroup(
+            competition=competition,
+            name="Linux",
+            check_types=["http"],
+        )
+        second_group = HostGroup(
+            competition=competition,
+            name="Windows",
+            check_types=["ping"],
+        )
+        db.session.add(competition)
+        db.session.commit()
+        self.login("admin", "another-long-test-password")
+
+        response = self.client.get(
+            f"/admin/competitions/{competition.id}/builder?step=templates"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'class="panel form-panel ip-template-card"'), 2)
+        self.assertEqual(
+            response.data.count(b'name="action" value="save-group-templates"'),
+            1,
+        )
+        self.assertIn(b"Save all IP templates", response.data)
+
+        response = self.client.post(
+            f"/admin/competitions/{competition.id}/builder?step=templates",
+            data={
+                "action": "save-group-templates",
+                "step": "templates",
+                "redirect_step": "teams",
+                "host_group_ids": [str(first_group.id), str(second_group.id)],
+                f"address_prefix_{first_group.id}": "10.{index}.1",
+                f"ending_octet_{first_group.id}": "22",
+                f"index_start_{first_group.id}": "10",
+                f"index_end_{first_group.id}": "11",
+                f"address_prefix_{second_group.id}": "10.{index}.2",
+                f"ending_octet_{second_group.id}": "23",
+                f"index_start_{second_group.id}": "10",
+                f"index_end_{second_group.id}": "11",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("step=teams", response.headers["Location"])
+        self.assertEqual(first_group.ip_template.address_template, "10.{index}.1.22")
+        self.assertEqual(second_group.ip_template.address_template, "10.{index}.2.23")
+        self.client.post(
+            f"/admin/competitions/{competition.id}/builder?step=teams",
+            data={
+                "action": "enroll-team",
+                "step": "teams",
+                "team_id": str(self.team.id),
+            },
+        )
+        self.assertEqual(
+            {
+                (host.host_group_id, host.address)
+                for host in Host.query.filter_by(competition_id=competition.id)
+            },
+            {
+                (first_group.id, "10.10.1.22"),
+                (second_group.id, "10.10.2.23"),
+            },
+        )
+
+        response = self.client.post(
+            f"/admin/competitions/{competition.id}/builder?step=templates",
+            data={
+                "action": "save-group-templates",
+                "step": "templates",
+                "host_group_ids": [str(first_group.id), str(second_group.id)],
+                f"address_prefix_{first_group.id}": "10.{index}.1",
+                f"ending_octet_{first_group.id}": "24",
+                f"index_start_{first_group.id}": "10",
+                f"index_end_{first_group.id}": "11",
+                f"address_prefix_{second_group.id}": "10.{index}.2",
+                f"ending_octet_{second_group.id}": "256",
+                f"index_start_{second_group.id}": "10",
+                f"index_end_{second_group.id}": "11",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Windows: The ending IP octet must be between 0 and 255.", response.data)
+        self.assertEqual(first_group.ip_template.address_template, "10.{index}.1.22")
+        self.assertEqual(second_group.ip_template.address_template, "10.{index}.2.23")
+        self.assertEqual(
+            {host.address for host in Host.query.filter_by(competition_id=competition.id)},
+            {"10.10.1.22", "10.10.2.23"},
+        )
+
     def test_score_check_step_opens_every_missing_group_check_template(self):
         competition = Competition(name="Required Check Templates")
         template = IPTemplate(
@@ -1147,6 +1240,17 @@ class PlatformTests(unittest.TestCase):
         self.assertIn(b"1 check templates to configure", response.data)
         self.assertNotIn(b"Configure HTTP / HTTPS for Ubuntu1", response.data)
         self.assertIn(b"Configure PING for Ubuntu1", response.data)
+        editing_service = Service.query.filter_by(check_type="http").one()
+        response = self.client.get(
+            f"/admin/competitions/{competition.id}/builder?step=checks&edit_service={editing_service.id}"
+        )
+        self.assertLess(
+            response.data.index(b"REQUIRED CONFIGURATION"),
+            response.data.index(b"DEVICE GROUP PROGRESS"),
+        )
+        self.assertIn(b"Save or cancel the current check edit", response.data)
+        self.assertEqual(response.data.count(b">Save check</button>"), 1)
+        self.assertNotIn(b"Configure PING for Ubuntu1", response.data)
 
         self.client.post(
             f"/admin/competitions/{competition.id}/builder?step=checks",

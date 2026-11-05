@@ -430,6 +430,8 @@ def competition_builder(competition_id):
             _delete_host_group(competition)
         elif action == "save-group-template":
             _save_group_template(competition)
+        elif action == "save-group-templates":
+            _save_group_templates(competition)
         elif action == "enroll-team":
             _enroll_builder_team(competition)
         elif action == "save-host-address":
@@ -453,11 +455,14 @@ def competition_builder(competition_id):
                 _update_status(competition, "active")
         else:
             flash("Unknown scoreboard builder action.", "error")
+        redirect_step = request.form.get("redirect_step")
+        if redirect_step not in step_names:
+            redirect_step = step if step in step_names else "details"
         return redirect(
             url_for(
                 "admin.competition_builder",
                 competition_id=competition.id,
-                step=step if step in step_names else "details",
+                step=redirect_step,
             )
         )
 
@@ -873,6 +878,96 @@ def _save_group_template(competition):
         index_start = -1
         index_end = -1
 
+    ip_template, candidate, error = _build_group_template_candidate(
+        competition,
+        group,
+        address_prefix,
+        ending_octet,
+        index_start,
+        index_end,
+    )
+    if error:
+        flash(error, "error")
+        return
+
+    _apply_group_template(competition, group, ip_template, candidate)
+
+
+def _save_group_templates(competition):
+    groups = HostGroup.query.filter_by(
+        competition_id=competition.id
+    ).order_by(HostGroup.name).all()
+    submitted_ids = request.form.getlist("host_group_ids")
+    try:
+        submitted_ids = [int(group_id) for group_id in submitted_ids]
+    except ValueError:
+        submitted_ids = []
+    if (
+        len(submitted_ids) != len(groups)
+        or len(set(submitted_ids)) != len(groups)
+        or set(submitted_ids) != {group.id for group in groups}
+    ):
+        flash("The device groups changed. Reload the page and try again.", "error")
+        return
+
+    prepared_templates = []
+    team_count = len(competition.teams_with_accounts)
+    for group in groups:
+        try:
+            ending_octet = int(request.form.get(f"ending_octet_{group.id}", ""))
+            index_start = int(request.form.get(f"index_start_{group.id}", ""))
+            index_end = int(request.form.get(f"index_end_{group.id}", ""))
+        except ValueError:
+            ending_octet = -1
+            index_start = -1
+            index_end = -1
+        ip_template, candidate, error = _build_group_template_candidate(
+            competition,
+            group,
+            request.form.get(f"address_prefix_{group.id}", "").strip().rstrip("."),
+            ending_octet,
+            index_start,
+            index_end,
+            team_count=team_count,
+        )
+        if error:
+            flash(f"{group.name}: {error}", "error")
+            return
+        prepared_templates.append((group, ip_template, candidate))
+
+    try:
+        for group, ip_template, candidate in prepared_templates:
+            if ip_template is None:
+                ip_template = candidate
+                db.session.add(ip_template)
+            else:
+                ip_template.address_template = candidate.address_template
+                ip_template.index_start = candidate.index_start
+                ip_template.index_end = candidate.index_end
+            group.ip_template = ip_template
+
+        db.session.flush()
+        _sync_generated_hosts(
+            competition,
+            host_groups=groups,
+            replace_existing=True,
+        )
+        db.session.commit()
+        flash("All IP templates saved and generated host addresses updated.", "success")
+    except ValueError as error:
+        db.session.rollback()
+        flash(str(error), "error")
+
+
+def _build_group_template_candidate(
+    competition,
+    group,
+    address_prefix,
+    ending_octet,
+    index_start,
+    index_end,
+    team_count=None,
+):
     ip_template = group.ip_template
     if ip_template and any(
         linked_group.id != group.id for linked_group in ip_template.host_groups
@@ -886,42 +981,48 @@ def _save_group_template(competition):
         index_end=index_end,
     )
     if not 0 <= ending_octet <= 255:
-        flash("The ending IP octet must be between 0 and 255.", "error")
-    elif IPTemplate.query.filter(
+        return None, None, "The ending IP octet must be between 0 and 255."
+    if IPTemplate.query.filter(
         IPTemplate.competition_id == competition.id,
         IPTemplate.name == candidate.name,
         IPTemplate.id != (ip_template.id if ip_template else 0),
     ).first():
         candidate.name = f"{group.name} IPs ({group.id})"
-    if not _template_is_valid(candidate, len(competition.teams_with_accounts)):
-        flash(
+    if team_count is None:
+        team_count = len(competition.teams_with_accounts)
+    if not _template_is_valid(candidate, team_count):
+        return (
+            None,
+            None,
             "Use one {index} placeholder in a valid IPv4 template and provide an index range with enough addresses for every enrolled team (0–255).",
-            "error",
         )
+    return ip_template, candidate, None
+
+
+def _apply_group_template(competition, group, ip_template, candidate):
+    if ip_template is None:
+        ip_template = candidate
+        db.session.add(ip_template)
     else:
-        if ip_template is None:
-            ip_template = candidate
-            db.session.add(ip_template)
-        else:
-            ip_template.address_template = candidate.address_template
-            ip_template.index_start = candidate.index_start
-            ip_template.index_end = candidate.index_end
-        group.ip_template = ip_template
-        try:
-            db.session.flush()
-            _sync_generated_hosts(
-                competition,
-                host_groups=[group],
-                replace_existing=True,
-            )
-            db.session.commit()
-            flash(
-                f"IP template for '{group.name}' saved; its host addresses were regenerated.",
-                "success",
-            )
-        except ValueError as error:
-            db.session.rollback()
-            flash(str(error), "error")
+        ip_template.address_template = candidate.address_template
+        ip_template.index_start = candidate.index_start
+        ip_template.index_end = candidate.index_end
+    group.ip_template = ip_template
+    try:
+        db.session.flush()
+        _sync_generated_hosts(
+            competition,
+            host_groups=[group],
+            replace_existing=True,
+        )
+        db.session.commit()
+        flash(
+            f"IP template for '{group.name}' saved; its host addresses were regenerated.",
+            "success",
+        )
+    except ValueError as error:
+        db.session.rollback()
+        flash(str(error), "error")
 
 
 def _save_host_group(competition):
